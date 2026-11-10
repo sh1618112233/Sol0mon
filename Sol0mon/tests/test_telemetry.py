@@ -183,9 +183,10 @@ def test_events_emitted_correctly():
         telemetry.reset()
 
 
-def test_unconfigured_recorder_is_silent_noop():
+def test_unconfigured_recorder_is_silent_noop(tmp_path, monkeypatch):
     """Contract 1b (supports 2): an unconfigured recorder emits nothing,
     writes nothing, raises nothing, and returns empty status/report."""
+    monkeypatch.chdir(tmp_path)
     assert not recorder.enabled
     # None of these raise or write anything.
     assert recorder.emit(EVENT_STARTED, STAGE_DEBATE) is None

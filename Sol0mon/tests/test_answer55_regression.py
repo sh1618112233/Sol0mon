@@ -143,7 +143,7 @@ def _consistent_narrative():
     )
 
 
-def test_answer55_artifacts_agree() -> None:
+def test_answer55_artifacts_agree(answer55_db) -> None:
     """TEST 5: build answer 55 -> decisions.json, implementation_spec, and
     synthesized_answer all agree on the 6 architectural points and never
     recommend a rejected option."""
@@ -230,7 +230,7 @@ def test_answer55_artifacts_agree() -> None:
                 f"{name} recommends rejected option '{rej}'")
 
 
-def test_answer55_spec_honours_verified_decisions() -> None:
+def test_answer55_spec_honours_verified_decisions(answer55_db) -> None:
     """TEST 5 (diagnostic): the decision_gaps guard reports NO gaps when the
     implementation spec honours every verified decision from answer 55."""
     tmp = tempfile.mkdtemp()

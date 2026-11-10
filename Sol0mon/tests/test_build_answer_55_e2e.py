@@ -70,7 +70,7 @@ def _good_spec_text():
     )
 
 
-def test_build_answer_55_e2e_resurrect_to_executor_success() -> None:
+def test_build_answer_55_e2e_resurrect_to_executor_success(answer55_db) -> None:
     """E2E: Build answer 55 -> resurrect -> build prompt -> build spec ->
     coding agent router -> mock executor -> success."""
     tmp_ws = tempfile.mkdtemp()

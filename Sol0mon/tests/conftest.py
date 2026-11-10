@@ -34,6 +34,36 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 
+@pytest.fixture
+def answer55_db(tmp_path):
+    """Seed a deterministic answer 55 in a private database for regression tests."""
+    import answer_memory
+    from test_deterministic_decisions import debate55_verification_result
+
+    path = tmp_path / "answer_memory.db"
+    previous_path = answer_memory.DB_FILE
+    answer_memory.DB_FILE = str(path)
+    answer_memory.memory._initialized = False
+    for index in range(54):
+        answer_memory.memory.save_debate(
+            question=f"fixture filler {index}", gpt_final="g", gemini_final="m",
+            synthesized_answer="fixture", consensus_score=0,
+            conflict_severity="LOW", conflict_points=[],
+            validated_disputes=[], verification_result={},
+        )
+    answer_id = answer_memory.memory.save_debate(
+        question="Design the lowest-cost autonomous multi-agent platform",
+        gpt_final="g", gemini_final="m", synthesized_answer="fixture answer",
+        consensus_score=99, conflict_severity="LOW", conflict_points=[],
+        validated_disputes=[],
+        verification_result=debate55_verification_result(),
+    )
+    assert answer_id == 55
+    yield answer_id
+    answer_memory.DB_FILE = previous_path
+    answer_memory.memory._initialized = False
+
+
 @pytest.fixture(autouse=True)
 def _isolate_sol0mon_module_globals():
     """Snapshot + restore the module globals tests swap in place.

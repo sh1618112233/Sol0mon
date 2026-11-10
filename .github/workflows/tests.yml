@@ -1,0 +1,21 @@
+name: Offline tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Sol0mon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: Sol0mon/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pytest

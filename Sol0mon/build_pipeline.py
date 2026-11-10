@@ -76,6 +76,7 @@ def _source_result_from_answer(answer: dict) -> dict:
         "verified_tradeoffs": [],
         "human_required": [],
         "verification_result": answer.get("verification_result", {}) or {},
+        "conflict_severity": answer.get("conflict_severity", ""),
         "resolved_decisions": answer.get("resolved_decisions", []) or [],
         "synthesized_answer": answer.get("synthesized_answer", ""),
     }
@@ -1042,6 +1043,16 @@ def run_build_pipeline(
                 "workspace_id": None,
             }
         answer_resurrected = True
+        if str(selected_answer.get("conflict_severity", "")).upper() == "FAILED_VERIFICATION":
+            return {
+                "classification": classification.to_dict(),
+                "workspace_id": None,
+                "answer_resurrected": True,
+                "status": "blocked",
+                "execution_blocked": True,
+                "blocked_reason": "source answer failed verification and is ineligible for implementation",
+                "error": "Build blocked: selected answer has FAILED_VERIFICATION status.",
+            }
         source_answer = selected_answer.get("synthesized_answer", "")
         user_intent_prompt = selected_answer.get("question") or None
         try:

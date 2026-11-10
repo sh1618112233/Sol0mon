@@ -174,7 +174,8 @@ human decisions, and deployment requirements.
 - Verification depends on the configured provider or local Ollama being available.
 - Multi-stage model workflows can take longer and use more inference than a single response.
 - Verification and consensus do not guarantee that claims or generated software are correct.
-- The full external-service workflow has not been freshly revalidated in the original remote environment.
+- Live browser and provider workflows are not covered by offline tests and
+  must be validated in the user's own environment.
 
 ## Future plans
 

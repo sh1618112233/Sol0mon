@@ -85,7 +85,8 @@ def test_resolve(fresh_store):
 # ---------------------------------------------------------------------------
 
 def test_persistence_across_instances(fresh_store, tmp_path, monkeypatch):
-    did = fresh_store.create("ws1", {"dispute_key": "queue", "question": "Queue?"})
+    did = fresh_store.create("ws1", {"dispute_key": "queue", "question": "Queue?",
+                                      "options": ["Kafka", "RabbitMQ"]})
     assert fresh_store.resolve(did, "Kafka")
     # Simulate a new process: fresh load from the same DB file
     resumed = hds.store
@@ -95,6 +96,15 @@ def test_persistence_across_instances(fresh_store, tmp_path, monkeypatch):
     assert resolved[0]["chosen_option"] == "Kafka"
     got = resumed.get(did)
     assert got is not None and got["dispute_key"] == "queue"
+
+
+def test_resolution_rejects_blank_unknown_and_wrong_workspace(fresh_store):
+    did = fresh_store.create("ws1", {"dispute_key": "queue", "question": "Queue?",
+                                      "options": ["Kafka", "RabbitMQ"]})
+    assert not fresh_store.resolve(did, "")
+    assert not fresh_store.resolve(did, "Redis", workspace_id="ws1")
+    assert not fresh_store.resolve(did, "Kafka", workspace_id="ws2")
+    assert fresh_store.resolve(did, "Kafka", workspace_id="ws1")
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +141,7 @@ def test_workspace_integration(fresh_store, tmp_path, monkeypatch):
     # add_human_required delegates to store.create
     ws.add_human_required({
         "decision_id": "h1", "dispute_key": "k8s", "question": "K8s?",
+        "options": ["Nomad", "Kubernetes"],
     })
     pending = ws.pending_human_items
     assert len(pending) == 1
@@ -167,7 +178,8 @@ def test_no_duplicated_state(fresh_store):
     assert "db" not in {d["dispute_key"] for d in pending}
 
     # resolved decisions are preserved across save_pending
-    did_r = fresh_store.create("ws1", {"dispute_key": "resolved_thing"})
+    did_r = fresh_store.create("ws1", {"dispute_key": "resolved_thing",
+                                        "options": ["yes", "no"]})
     fresh_store.resolve(did_r, "yes")
     fresh_store.save_pending("ws1", [{"dispute_key": "new_pending"}])
     assert len(fresh_store.resolved_list("ws1")) == 1

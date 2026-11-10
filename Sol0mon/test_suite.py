@@ -594,6 +594,7 @@ def test_workspace_manager():
 
     # Add tradeoffs
     ws.add_verified_tradeoff({
+        "normalized_key": "orchestration_choice",
         "option_a": "Kubernetes",
         "option_b": "Nomad",
         "recommendation": "Use K8s",
@@ -604,6 +605,7 @@ def test_workspace_manager():
 
     # Duplicate tradeoff
     ws.add_verified_tradeoff({
+        "normalized_key": "orchestration_choice",
         "option_a": "Kubernetes",
         "option_b": "Nomad",
     })
@@ -854,6 +856,7 @@ def test_workspace_orchestrator():
         "normalized_key": "db_postgres",
     })
     ws.add_verified_tradeoff({
+        "normalized_key": "orchestration_choice",
         "option_a": "K8s", "option_b": "Nomad",
         "recommendation": "K8s", "confidence": 85,
         "reasoning": "Better ecosystem",

@@ -85,7 +85,12 @@ flowchart TD
 
 ## Install
 
-Clone the repository and run these commands from its directory.
+The application and its requirements are in the canonical `Sol0mon/`
+directory. From the repository root, enter that directory before installing:
+
+```bash
+cd Sol0mon
+```
 
 ### Windows PowerShell
 
@@ -138,23 +143,25 @@ The CLI also provides `build` and `resume` commands; use `--help` to see their a
 
 ## Test
 
-Run the offline warm-up check:
+Run the complete offline test suite (Python 3.12):
 
 ```bash
-python -B tests/test_debate_warmup.py
+python -m pytest
 ```
 
-Run the broader test driver with:
+Live browser/provider checks are excluded by default. Run them only when you
+have deliberately prepared authenticated sessions and external services:
 
 ```bash
-python run_all_tests.py
+SOLOMON_RUN_LIVE_TESTS=1 python -m pytest -m live
 ```
 
-Some tests require external tools or services. Review the output for skipped or failed tests.
+See [the operator guide](Sol0mon/docs/operator_guide.md) for persistence, recovery,
+human decisions, and deployment requirements.
 
 ## Project structure
 
-- Python modules at the repository root: pipeline, debate, verification, providers, memory, and CLI.
+- Python modules at the `Sol0mon/` root: pipeline, debate, verification, providers, memory, and CLI.
 - `coding_agents/`: coding-agent adapters.
 - `docs/`: architecture and engineering notes.
 - `tests/` and root-level test files: automated checks.

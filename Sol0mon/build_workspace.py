@@ -62,10 +62,14 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from storage_paths import persistent_dir
 
 # Root for all build workspaces. Configurable via env so tests can
 # point it at a tmp dir without touching real data.
-WORKSPACE_ROOT = Path(os.environ.get("SOL0MON_BUILD_WORKSPACE_ROOT", "workspaces"))
+WORKSPACE_ROOT = persistent_dir(
+    "workspaces", override=os.environ.get("SOL0MON_BUILD_WORKSPACE_ROOT"),
+    legacy_names=("workspaces",),
+)
 
 BUILD_SPEC_VERSION = 1
 

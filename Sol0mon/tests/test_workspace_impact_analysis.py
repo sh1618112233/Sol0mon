@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import sys
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -105,6 +106,17 @@ def test_contradiction_postgresql_critical() -> None:
     # dependency: storage_strategy depends on database_choice (references
     # "database"); provider_routing/deployment_model do not.
     assert "storage_strategy" in impact["affected_disputes"], impact
+
+
+def test_tradeoff_identity_is_required_and_scoped_by_dispute():
+    ws = _critical_workspace()
+    with pytest.raises(ValueError, match="normalized_key"):
+        ws.add_verified_tradeoff({"option_a": "SQLite", "option_b": "PostgreSQL"})
+    ws.add_verified_tradeoff({"normalized_key": "storage_a",
+                              "option_a": "SQLite", "option_b": "PostgreSQL"})
+    ws.add_verified_tradeoff({"normalized_key": "storage_b",
+                              "option_a": "SQLite", "option_b": "PostgreSQL"})
+    assert len(ws.verified_tradeoffs) == 2
 
 
 # ---------------------------------------------------------------------------

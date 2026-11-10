@@ -138,19 +138,20 @@ The CLI also provides `build` and `resume` commands; use `--help` to see their a
 
 ## Test
 
-Run the offline warm-up check:
+Run the complete offline suite (Python 3.12):
 
 ```bash
-python -B tests/test_debate_warmup.py
+python -m pytest
 ```
 
-Run the broader test driver with:
+Live browser/provider checks are excluded by default and require explicit opt-in:
 
 ```bash
-python run_all_tests.py
+SOLOMON_RUN_LIVE_TESTS=1 python -m pytest -m live
 ```
 
-Some tests require external tools or services. Review the output for skipped or failed tests.
+See [the operator guide](docs/operator_guide.md) for database configuration,
+human decision resolution, recovery, and deployment requirements.
 
 ## Project structure
 

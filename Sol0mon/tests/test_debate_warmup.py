@@ -348,9 +348,11 @@ def test_first_consensus_check_at_dispute_round_three(tmp_path):
 
 if __name__ == "__main__":
     import pathlib
-    tmp = pathlib.Path("/tmp/opencode_warmup_selfcheck")
-    tmp.mkdir(parents=True, exist_ok=True)
-    test_warmup_runs_before_any_extraction_or_consensus(tmp)
-    test_warmup_is_noop_when_threshold_le_one(tmp)
-    test_first_consensus_check_at_dispute_round_three(tmp)
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="sol0mon_warmup_selfcheck_") as tmp:
+        tmp = pathlib.Path(tmp)
+        test_warmup_runs_before_any_extraction_or_consensus(tmp)
+        test_warmup_is_noop_when_threshold_le_one(tmp)
+        test_first_consensus_check_at_dispute_round_three(tmp)
     print("OK — warmup invariants hold")

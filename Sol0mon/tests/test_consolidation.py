@@ -509,7 +509,7 @@ def test_resume_reuses_persisted_plan_no_regeneration():
         json.dumps(decisions, indent=2), encoding="utf-8")
     (bw._workspace_dir(wid) / "answer.json").write_text(
         json.dumps({"synthesized_answer": "Use SQLite", "answer_id": 1,
-                    "question": "q"}, indent=2),
+                    "question": "q", "verification_result": VR_156}, indent=2),
         encoding="utf-8")
     rep = resume.resume_build(wid)
     assert rep["resumed"] is True, rep

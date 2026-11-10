@@ -393,6 +393,15 @@ def finalize_build(
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             }]
 
+        existing_workspace = workspace_mgr.load_workspace(workspace_id)
+        if existing_workspace:
+            merged = {d.get("normalized_key") or d.get("dispute_key"): dict(d)
+                      for d in existing_workspace.verified_decisions
+                      if d.get("normalized_key") or d.get("dispute_key")}
+            merged.update({d.get("normalized_key") or d.get("dispute_key"): dict(d)
+                           for d in verified_decisions
+                           if d.get("normalized_key") or d.get("dispute_key")})
+            verified_decisions = list(merged.values())
         ok = workspace_mgr.upsert_build_workspace(
             workspace_id,
             original_prompt=source_question or original_prompt,
@@ -402,6 +411,18 @@ def finalize_build(
             consensus_score=consensus_score,
             verified_decisions=verified_decisions,
             resolved_disputes=resolved_decisions,
+            verified_tradeoffs=(existing_workspace.verified_tradeoffs if existing_workspace else []),
+            human_required_items=(existing_workspace.human_required_items if existing_workspace else []),
+            architecture_constraints=(existing_workspace.architecture_constraints if existing_workspace else []),
+            consensus_history=(existing_workspace.consensus_history if existing_workspace else []),
+            active_disputes=(existing_workspace.active_disputes if existing_workspace else []),
+            gpt_position=(existing_workspace.gpt_position if existing_workspace else ""),
+            gemini_position=(existing_workspace.gemini_position if existing_workspace else ""),
+            answer_history=(existing_workspace.answer_history if existing_workspace else answer_history),
+            impact_audit_trail=(existing_workspace.impact_audit_trail if existing_workspace else []),
+            research_evidence=(existing_workspace.research_evidence if existing_workspace else []),
+            research_audit_trail=(existing_workspace.research_audit_trail if existing_workspace else []),
+            decision_history=(existing_workspace.decision_history if existing_workspace else []),
             current_job_id=build_state.get("current_job_id", "") or "",
             error=build_state.get("error", "") or "",
             retry_count=int(build_state.get("retry_count", 0) or 0),

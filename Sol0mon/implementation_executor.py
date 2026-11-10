@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -84,7 +85,7 @@ def _run_tests(working_dir: str | None = None) -> dict:
     try:
         # First try pytest
         result = subprocess.run(
-            ["python3", "-m", "pytest", "--tb=short", "-x"],
+            [sys.executable, "-m", "pytest", "--tb=short", "-x"],
             capture_output=True,
             text=True,
             timeout=TEST_TIMEOUT_SECONDS,
@@ -105,7 +106,7 @@ def _run_tests(working_dir: str | None = None) -> dict:
         # Fall back to test_suite.py
         try:
             result = subprocess.run(
-                ["python3", "test_suite.py"],
+                [sys.executable, "test_suite.py"],
                 capture_output=True,
                 text=True,
                 timeout=TEST_TIMEOUT_SECONDS,

@@ -206,6 +206,21 @@ class WorkspaceDebateEngine(DebateEngine):
                 # settled representation from the active workspace state.
                 reopened = [self._reopen_from_workspace(key, ws, follow_up)
                             for key in affected_keys]
+                for key, item in zip(affected_keys, reopened):
+                    if item is None:
+                        continue
+                    previous = next((dict(d) for d in ws.verified_decisions
+                                     if (d.get("normalized_key") or d.get("dispute_key")) == key), None)
+                    if previous is None:
+                        previous = next((dict(d) for d in ws.resolved_disputes
+                                         if (d.get("normalized_key") or d.get("dispute_key")) == key), {})
+                    ws.decision_history.append({
+                        "normalized_key": key, "previous_decision": previous,
+                        "previous_verification_status": previous.get("status", "verified"),
+                        "reason": "follow_up_reopened", "follow_up": follow_up,
+                        "reopened_at": datetime.now(timezone.utc).isoformat(),
+                        "replacement_outcome": None,
+                    })
                 ws.verified_decisions = [
                     d for d in ws.verified_decisions
                     if (d.get("normalized_key") or d.get("dispute_key")) not in affected_set
@@ -214,6 +229,10 @@ class WorkspaceDebateEngine(DebateEngine):
                     d for d in ws.resolved_disputes
                     if (d.get("normalized_key") or d.get("dispute_key")) not in affected_set
                 ]
+                # Persist suspension and correction lineage before either
+                # provider is prompted. An interrupted re-debate must not
+                # reactivate the decision being reconsidered.
+                workspace_mgr.save_workspace(ws)
             constraint_context = ws.get_constraint_context()
 
             # Phase 9: reopen only the impacted HUMAN_REQUIRED dispute(s);
@@ -254,8 +273,12 @@ class WorkspaceDebateEngine(DebateEngine):
                 # their research evidence (Phase 5 reuse).
 
             # Step 6: Build debate queue for new + reopened disputes
-            all_new_disputes = raw_disputes + [r.dispute_text for r in reopened if r]
-            if not all_new_disputes:
+            # Build newly extracted disputes normally, then append reopened
+            # objects directly so their persisted identity cannot be
+            # re-derived from changed wording by the validator/model.
+            disputes = self._build_dispute_queue(raw_disputes, gpt_new, gemini_new)
+            disputes.extend(r for r in reopened if r)
+            if not disputes:
                 # No new disputes — just synthesize with new positions
                 print("[RESUME] No new disputes. Synthesizing from prior state.")
                 return self._synthesize_resume(
@@ -280,9 +303,6 @@ class WorkspaceDebateEngine(DebateEngine):
             for nk in reopened_keys:
                 if nk in arch_memory._decisions:
                     del arch_memory._decisions[nk]
-
-            # Build dispute queue with workspace-aware validation
-            disputes = self._build_dispute_queue(all_new_disputes, gpt_new, gemini_new)
 
             # Debate each new/reopened dispute
             gov_result = GovernanceResult()
@@ -342,6 +362,11 @@ class WorkspaceDebateEngine(DebateEngine):
             )
 
             # Update workspace with new results
+            resolved_nks = {
+                c.get("normalized_key", "")
+                for c in verification_result.get("resolved_claims", [])
+                if isinstance(c, dict)
+            }
             for d in disputes:
                 if d.status == "pending_verification":
                     unresolved_nks = {
@@ -384,7 +409,7 @@ class WorkspaceDebateEngine(DebateEngine):
                             d.governed_outcome = outcome.to_dict()
                             d.governed_outcome["decision_id"] = decision_id
                             d.status = "human_required"
-                    else:
+                    elif d.normalized_key in resolved_nks:
                         ws.add_verified_decision({
                             "decision": d.dispute_text,
                             "normalized_key": d.normalized_key,
@@ -392,6 +417,19 @@ class WorkspaceDebateEngine(DebateEngine):
                             "priority": d.priority,
                             "priority_weight": d.priority_weight,
                         })
+                        d.status = "resolved"
+                    else:
+                        # Missing/ambiguous verifier output stays unresolved.
+                        # Governance is reached only for an explicit
+                        # unresolved claim, never by treating omission as one.
+                        d.status = "unresolved"
+
+            for item in ws.decision_history:
+                if item.get("replacement_outcome") is None and item.get("normalized_key") in {d.normalized_key for d in disputes}:
+                    replacement = next((d for d in disputes if d.normalized_key == item["normalized_key"]), None)
+                    if replacement:
+                        item["replacement_outcome"] = replacement.to_dict()
+                        item["replaced_at"] = datetime.now(timezone.utc).isoformat()
 
             # Update positions and state
             ws.gpt_position = gpt_current
@@ -808,6 +846,12 @@ class WorkspaceDebateEngine(DebateEngine):
                 if nk:
                     unresolved_nks.add(nk)
 
+            resolved_nks = set()
+            for claim in result.get("resolved_claims", []):
+                nk = claim.get("normalized_key", "") if isinstance(claim, dict) else ""
+                if nk:
+                    resolved_nks.add(nk)
+
             retry_list = []
             for d in disputes:
                 if d.status != "pending_verification":
@@ -822,10 +866,15 @@ class WorkspaceDebateEngine(DebateEngine):
                         print(f"[GOVERNANCE] {d.normalized_key} — verification retries exhausted.")
                         outcome = self._resolve_governance(d, result)
                         self._apply_governance_outcome(d, outcome, arch_memory, gov_result)
-                else:
+                elif d.normalized_key in resolved_nks:
                     arch_memory.resolve(d)
                     d.status = "resolved"
                     print(f"[RESOLVED] {d.normalized_key} — verified")
+                else:
+                    # Absence from both outcome buckets is not a positive
+                    # verification and does not trigger governance.
+                    d.status = "unresolved"
+                    print(f"[UNRESOLVED] {d.normalized_key} — verifier omitted an explicit outcome.")
 
             if retry_list:
                 print(f"\n[RE-DEBATE] {len(retry_list)} disputes...")
@@ -937,13 +986,15 @@ class WorkspaceDebateEngine(DebateEngine):
         from synthesis_engine import synthesize_answer
 
         gov_ctx = governance_context or {}
+        persisted_verification = dict(verification_result or {})
+        persisted_verification["governance_result"] = gov_ctx
         final = synthesize_answer(
             question=question,
             gpt_final=gpt_current,
             gemini_final=gemini_current,
             validated_disputes=[d.to_dict() for d in disputes] if disputes else [],
             consensus_score=ws.consensus_score,
-            verification_result=verification_result or {},
+            verification_result=persisted_verification,
             governance_context=gov_ctx,
             disputes=disputes,
         )
@@ -958,7 +1009,7 @@ class WorkspaceDebateEngine(DebateEngine):
             conflict_severity="LOW" if not disputes else "MEDIUM",
             conflict_points=[d.normalized_key for d in disputes] if disputes else [],
             validated_disputes=[d.to_dict() for d in disputes] if disputes else [],
-            verification_result=verification_result or {},
+            verification_result=persisted_verification,
             workspace_id=ws.workspace_id,
         )
 
@@ -974,7 +1025,7 @@ class WorkspaceDebateEngine(DebateEngine):
             "gemini_final": gemini_current,
             "synthesized_answer": final,
             "validated_disputes": [d.to_dict() for d in disputes] if disputes else [],
-            "verification_result": verification_result or {},
+            "verification_result": persisted_verification,
             "final_consensus_score": ws.consensus_score,
             "answer_id": answer_id,
             "verified_decisions": ws.verified_decisions,

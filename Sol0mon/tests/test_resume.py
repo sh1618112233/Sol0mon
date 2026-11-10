@@ -68,7 +68,8 @@ def _setup_workspace(decisions=None, answer_text="Use SQLite"):
     if answer_text is not None:
         (bw._workspace_dir(wid) / "answer.json").write_text(
             json.dumps({"synthesized_answer": answer_text,
-                        "answer_id": 1, "question": "q"}, indent=2),
+                        "answer_id": 1, "question": "q",
+                        "verification_result": VR_156}, indent=2),
             encoding="utf-8")
     return wid
 

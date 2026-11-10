@@ -112,9 +112,10 @@ class HumanDecisionQueue:
         return [HumanDecision.from_dict(d)
                 for d in store.all_for_workspace(workspace_id)]
 
-    def resolve(self, decision_id: str, chosen_option: str) -> bool:
+    def resolve(self, decision_id: str, chosen_option: str,
+                workspace_id: str | None = None) -> bool:
         """Resolve a human decision with the user's choice."""
-        success = store.resolve(decision_id, chosen_option)
+        success = store.resolve(decision_id, chosen_option, workspace_id=workspace_id)
         if success:
             print(f"[HUMAN QUEUE] Resolved decision {decision_id[:8]}... "
                   f"-> {chosen_option}")
@@ -174,10 +175,11 @@ def enqueue_human_decision(
     return HumanDecisionQueue().enqueue(decision)
 
 
-def resolve_human_decision(decision_id: str, chosen_option: str) -> bool:
+def resolve_human_decision(decision_id: str, chosen_option: str,
+                           workspace_id: str | None = None) -> bool:
     """Resolve a human decision in the store. The store is the authority;
     Workspace.pending_human_items reads from it so no separate sync needed."""
-    return HumanDecisionQueue().resolve(decision_id, chosen_option)
+    return HumanDecisionQueue().resolve(decision_id, chosen_option, workspace_id)
 
 
 def get_pending_for_workspace(workspace_id: str) -> list[dict]:

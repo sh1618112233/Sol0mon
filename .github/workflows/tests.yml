@@ -1,0 +1,24 @@
+name: Offline tests
+
+on:
+  push:
+    branches: [main, fix/reliability-and-aws-readiness]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: Sol0mon/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r Sol0mon/requirements.txt
+      - name: Compile application
+        run: python -m compileall -q Sol0mon
+      - name: Run offline suite
+        run: python -m pytest -ra

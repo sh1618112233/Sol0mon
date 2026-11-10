@@ -24,11 +24,12 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
+from storage_paths import workspace_database_path
 
 # ---------------------------------------------------------------------------
 # Database path — configurable, but defaults to same directory as job_store
 # ---------------------------------------------------------------------------
-DB_FILE = os.environ.get("WORKSPACE_DB", "database/workspaces.db")
+DB_FILE = workspace_database_path()
 
 
 def _get_connection() -> sqlite3.Connection:
@@ -130,6 +131,9 @@ class Workspace:
     # follow-ups + per-run audit trail (research_plan/topics/sources/reuse).
     research_evidence: list[dict] = field(default_factory=list)
     research_audit_trail: list[dict] = field(default_factory=list)
+    # Append-only correction lineage; old outcomes remain auditable when a
+    # follow-up suspends them from active constraints.
+    decision_history: list[dict] = field(default_factory=list)
 
     # Metadata
     status: str = WorkspaceStatus.CREATED
@@ -160,6 +164,7 @@ class Workspace:
             "impact_audit_trail": self.impact_audit_trail,
             "research_evidence": self.research_evidence,
             "research_audit_trail": self.research_audit_trail,
+            "decision_history": self.decision_history,
             "status": self.status,
             "current_job_id": self.current_job_id,
             "consensus_score": self.consensus_score,
@@ -188,6 +193,7 @@ class Workspace:
             impact_audit_trail=data.get("impact_audit_trail", []),
             research_evidence=data.get("research_evidence", []),
             research_audit_trail=data.get("research_audit_trail", []),
+            decision_history=data.get("decision_history", []),
             status=data.get("status", WorkspaceStatus.CREATED),
             current_job_id=data.get("current_job_id", ""),
             consensus_score=data.get("consensus_score", 0),
@@ -204,12 +210,16 @@ class Workspace:
     @property
     def resolved_decision_keys(self) -> set[str]:
         """Set of normalized_keys for all resolved decisions."""
-        return {d.get("normalized_key", "") for d in self.resolved_disputes}
+        return {d.get("normalized_key") or d.get("dispute_key")
+                for d in self.resolved_disputes
+                if d.get("normalized_key") or d.get("dispute_key")}
 
     @property
     def verified_decision_keys(self) -> set[str]:
         """Set of normalized_keys for verified decisions."""
-        return {d.get("normalized_key", "") for d in self.verified_decisions}
+        return {d.get("normalized_key") or d.get("dispute_key")
+                for d in self.verified_decisions
+                if d.get("normalized_key") or d.get("dispute_key")}
 
     @property
     def pending_human_items(self) -> list[dict]:
@@ -236,21 +246,30 @@ class Workspace:
         nk = str(decision.get("normalized_key") or "").strip()
         if not nk:
             raise ValueError("verified decision requires a normalized_key")
-        existing = {d.get("normalized_key") for d in self.verified_decisions}
+        existing = {d.get("normalized_key") or d.get("dispute_key")
+                    for d in self.verified_decisions}
         if nk and nk not in existing:
             self.verified_decisions.append(decision)
 
     def add_verified_tradeoff(self, tradeoff: dict) -> None:
         """Add a verified tradeoff with option_a, option_b, recommendation, confidence, reasoning."""
+        tradeoff = dict(tradeoff)
+        if not tradeoff.get("normalized_key") and tradeoff.get("dispute_key"):
+            tradeoff["normalized_key"] = tradeoff["dispute_key"]
+        key = str(tradeoff.get("normalized_key") or "").strip()
+        if not key:
+            raise ValueError("verified tradeoff requires a normalized_key")
         required = {"option_a", "option_b"}
         if not all(k in tradeoff for k in required):
             return
-        # Deduplicate by option pair
-        existing = {(t.get("option_a", ""), t.get("option_b", ""))
-                    for t in self.verified_tradeoffs}
-        pair = (tradeoff.get("option_a", ""), tradeoff.get("option_b", ""))
-        if pair not in existing:
-            self.verified_tradeoffs.append(tradeoff)
+        # Identity is dispute-scoped: the same options can be debated in
+        # unrelated contexts without being collapsed into one decision.
+        for index, current in enumerate(self.verified_tradeoffs):
+            current_key = current.get("normalized_key") or current.get("dispute_key")
+            if current_key == key:
+                self.verified_tradeoffs[index] = tradeoff
+                return
+        self.verified_tradeoffs.append(tradeoff)
 
     def add_human_required(self, item: dict) -> None:
         """Queue a human-required decision via the unified store."""
@@ -264,16 +283,27 @@ class Workspace:
 
     def get_constraint_context(self) -> str:
         """Build constraint injection text from resolved decisions."""
-        if not self.verified_decisions:
+        if not self.verified_decisions and not self.verified_tradeoffs:
             return ""
         lines = ["<workspace_constraints>"]
         for d in self.verified_decisions[-10:]:  # Last 10 constraints
             key = d.get("normalized_key") or d.get("dispute_key")
             if key:
                 lines.append(f"  [{key}]: {d.get('decision', '')}")
+        if self.verified_tradeoffs:
+            lines.append("Active trade-offs (both options remain viable):")
+            for tradeoff in self.verified_tradeoffs[-10:]:
+                key = tradeoff.get("normalized_key") or tradeoff.get("dispute_key")
+                if key:
+                    lines.append(
+                        f"  [{key}] {tradeoff.get('option_a', '')} vs "
+                        f"{tradeoff.get('option_b', '')}; advisory recommendation: "
+                        f"{tradeoff.get('recommendation') or '(none)'}"
+                    )
         lines.append("</workspace_constraints>")
-        lines.append("The above decisions are SETTLED from prior interactions. "
-                      "Do not contradict them.")
+        lines.append("Settled decisions above must be preserved unless the user "
+                      "explicitly reopens them. Listed trade-offs remain viable "
+                      "options; do not collapse them into a single settled choice.")
         return "\n".join(lines)
 
     def mark_updated(self) -> None:
@@ -347,6 +377,7 @@ class WorkspaceManager:
             impact_audit_trail TEXT NOT NULL DEFAULT '[]',
             research_evidence TEXT NOT NULL DEFAULT '[]',
             research_audit_trail TEXT NOT NULL DEFAULT '[]',
+            decision_history TEXT NOT NULL DEFAULT '[]',
             status TEXT NOT NULL DEFAULT 'created',
             current_job_id TEXT NOT NULL DEFAULT '',
             consensus_score INTEGER NOT NULL DEFAULT 0,
@@ -392,6 +423,7 @@ class WorkspaceManager:
             ("impact_audit_trail", "TEXT NOT NULL DEFAULT '[]'"),
             ("research_evidence", "TEXT NOT NULL DEFAULT '[]'"),
             ("research_audit_trail", "TEXT NOT NULL DEFAULT '[]'"),
+            ("decision_history", "TEXT NOT NULL DEFAULT '[]'"),
             ("error", "TEXT NOT NULL DEFAULT ''"),
             ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
         ]
@@ -468,12 +500,13 @@ class WorkspaceManager:
         cursor.execute("SELECT * FROM workspaces WHERE workspace_id = ?",
                        (workspace_id,))
         row = cursor.fetchone()
+        column_names = [column[0] for column in cursor.description or []]
         conn.close()
 
         if row is None:
             return None
 
-        return self._row_to_workspace(row)
+        return self._row_to_workspace(row, column_names)
 
     def save_workspace(self, workspace: Workspace) -> bool:
         """Persist workspace state to the database. Uses UPDATE/INSERT,
@@ -506,6 +539,7 @@ class WorkspaceManager:
                     impact_audit_trail = ?,
                     research_evidence = ?,
                     research_audit_trail = ?,
+                    decision_history = ?,
                     status = ?,
                     current_job_id = ?,
                     consensus_score = ?,
@@ -515,19 +549,20 @@ class WorkspaceManager:
                 WHERE workspace_id = ?
                 """, (
                     workspace.original_prompt,
-                    _safe_json_dump(workspace.verified_decisions, []),
-                    _safe_json_dump(workspace.verified_tradeoffs, []),
-                    _safe_json_dump(workspace.human_required_items, []),
+                    _safe_json_dump(_normalize_identity(workspace.verified_decisions), []),
+                    _safe_json_dump(_normalize_identity(workspace.verified_tradeoffs), []),
+                    _safe_json_dump(_normalize_identity(workspace.human_required_items), []),
                     _safe_json_dump(workspace.architecture_constraints, []),
                     _safe_json_dump(workspace.consensus_history, []),
                     _safe_json_dump(workspace.active_disputes, []),
-                    _safe_json_dump(workspace.resolved_disputes, []),
+                    _safe_json_dump(_normalize_identity(workspace.resolved_disputes), []),
                     workspace.gpt_position,
                     workspace.gemini_position,
                     _safe_json_dump(workspace.answer_history, []),
                     _safe_json_dump(workspace.impact_audit_trail, []),
                     _safe_json_dump(workspace.research_evidence, []),
                     _safe_json_dump(workspace.research_audit_trail, []),
+                    _safe_json_dump(workspace.decision_history, []),
                     workspace.status,
                     workspace.current_job_id,
                     workspace.consensus_score,
@@ -546,25 +581,27 @@ class WorkspaceManager:
                     gpt_position, gemini_position, answer_history,
                     impact_audit_trail,
                     research_evidence, research_audit_trail,
+                    decision_history,
                     status, current_job_id, consensus_score,
                     created_at, updated_at, error, retry_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     workspace.workspace_id,
                     workspace.original_prompt,
-                    _safe_json_dump(workspace.verified_decisions, []),
-                    _safe_json_dump(workspace.verified_tradeoffs, []),
-                    _safe_json_dump(workspace.human_required_items, []),
+                    _safe_json_dump(_normalize_identity(workspace.verified_decisions), []),
+                    _safe_json_dump(_normalize_identity(workspace.verified_tradeoffs), []),
+                    _safe_json_dump(_normalize_identity(workspace.human_required_items), []),
                     _safe_json_dump(workspace.architecture_constraints, []),
                     _safe_json_dump(workspace.consensus_history, []),
                     _safe_json_dump(workspace.active_disputes, []),
-                    _safe_json_dump(workspace.resolved_disputes, []),
+                    _safe_json_dump(_normalize_identity(workspace.resolved_disputes), []),
                     workspace.gpt_position,
                     workspace.gemini_position,
                     _safe_json_dump(workspace.answer_history, []),
                     _safe_json_dump(workspace.impact_audit_trail, []),
                     _safe_json_dump(workspace.research_evidence, []),
                     _safe_json_dump(workspace.research_audit_trail, []),
+                    _safe_json_dump(workspace.decision_history, []),
                     workspace.status,
                     workspace.current_job_id,
                     workspace.consensus_score,
@@ -623,6 +660,7 @@ class WorkspaceManager:
         impact_audit_trail: list | None = None,
         research_evidence: list | None = None,
         research_audit_trail: list | None = None,
+        decision_history: list | None = None,
         current_job_id: str = "",
         error: str = "",
         retry_count: int = 0,
@@ -658,13 +696,13 @@ class WorkspaceManager:
         """
         self._ensure_initialized()
         now = datetime.now(timezone.utc).isoformat()
-        verified_decisions = verified_decisions or []
-        verified_tradeoffs = verified_tradeoffs or []
-        human_required_items = human_required_items or []
+        verified_decisions = _normalize_identity(verified_decisions or [])
+        verified_tradeoffs = _normalize_identity(verified_tradeoffs or [])
+        human_required_items = _normalize_identity(human_required_items or [])
         architecture_constraints = architecture_constraints or []
         consensus_history = consensus_history or []
         active_disputes = active_disputes or []
-        resolved_disputes = resolved_disputes or []
+        resolved_disputes = _normalize_identity(resolved_disputes or [])
         answer_history = answer_history or []
         impact_audit_trail = impact_audit_trail or []
         research_evidence = research_evidence or []
@@ -683,10 +721,13 @@ class WorkspaceManager:
         try:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT 1 FROM workspaces WHERE workspace_id = ?",
+                "SELECT decision_history FROM workspaces WHERE workspace_id = ?",
                 (workspace_id,)
             )
-            exists = cursor.fetchone() is not None
+            existing = cursor.fetchone()
+            exists = existing is not None
+            if decision_history is None:
+                decision_history = (_safe_json_load(existing[0], []) if exists else [])
             if exists:
                 cursor.execute("""
                 UPDATE workspaces SET
@@ -704,6 +745,7 @@ class WorkspaceManager:
                     impact_audit_trail = ?,
                     research_evidence = ?,
                     research_audit_trail = ?,
+                    decision_history = ?,
                     status = ?,
                     current_job_id = ?,
                     consensus_score = ?,
@@ -725,6 +767,7 @@ class WorkspaceManager:
                     _safe_json_dump(impact_audit_trail, []),
                     _safe_json_dump(research_evidence, []),
                     _safe_json_dump(research_audit_trail, []),
+                    _safe_json_dump(decision_history, []),
                     status, current_job_id, consensus_score,
                     now, error, retry_count, workspace_id,
                 ))
@@ -738,9 +781,10 @@ class WorkspaceManager:
                     gpt_position, gemini_position, answer_history,
                     impact_audit_trail,
                     research_evidence, research_audit_trail,
+                    decision_history,
                     status, current_job_id, consensus_score,
                     created_at, updated_at, error, retry_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     workspace_id, original_prompt,
                     _safe_json_dump(verified_decisions, []),
@@ -755,6 +799,7 @@ class WorkspaceManager:
                     _safe_json_dump(impact_audit_trail, []),
                     _safe_json_dump(research_evidence, []),
                     _safe_json_dump(research_audit_trail, []),
+                    _safe_json_dump(decision_history, []),
                     status, current_job_id, consensus_score,
                     created_at or now, now, error, retry_count,
                 ))
@@ -838,7 +883,7 @@ class WorkspaceManager:
         SELECT workspace_id, original_prompt, status, consensus_score,
                created_at, updated_at
         FROM workspaces
-        WHERE original_prompt LIKE ?
+        WHERE original_prompt LIKE ? ESCAPE '\\'
         ORDER BY updated_at DESC
         LIMIT ?
         """, (like_query, limit))
@@ -891,7 +936,8 @@ class WorkspaceManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _row_to_workspace(self, row: tuple) -> Workspace:
+    def _row_to_workspace(self, row: tuple,
+                          column_names: list[str] | None = None) -> Workspace:
         """Convert a database row to a Workspace object."""
         cols = [
             "workspace_id", "original_prompt", "verified_decisions",
@@ -901,24 +947,26 @@ class WorkspaceManager:
             "gpt_position", "gemini_position", "answer_history",
             "impact_audit_trail",
             "research_evidence", "research_audit_trail",
+            "decision_history",
             "status", "current_job_id", "consensus_score",
             "created_at", "updated_at", "error", "retry_count",
         ]
 
-        # Map row values to column names, handling variable column counts
-        data = {}
-        for i, col in enumerate(cols):
-            if i < len(row):
-                data[col] = row[i]
-            else:
-                # Column didn't exist in this row version
+        # ALTER TABLE appends new fields, so SELECT * order differs between
+        # legacy and freshly-created databases. Map through SQLite's actual
+        # column names instead of assuming the latest schema order.
+        if column_names:
+            data = dict(zip(column_names, row))
+        else:
+            data = dict(zip(cols, row))
+        for col in cols:
+            if col not in data:
                 data[col] = "" if col in ("gpt_position", "gemini_position",
                                             "current_job_id", "created_at",
                                             "updated_at", "error") else \
                             [] if col.endswith("s") or col.endswith("ems") or \
                                    col.endswith("ory") or col.endswith("ail") \
-                                   or col.endswith("ence") \
-                                   else 0
+                                   or col.endswith("ence") else 0
 
         # Deserialize JSON columns
         json_cols = [
@@ -927,9 +975,14 @@ class WorkspaceManager:
             "active_disputes", "resolved_disputes", "answer_history",
             "impact_audit_trail",
             "research_evidence", "research_audit_trail",
+            "decision_history",
         ]
         for col in json_cols:
             data[col] = _safe_json_load(data[col], [])
+
+        for col in ("verified_decisions", "verified_tradeoffs",
+                    "human_required_items", "resolved_disputes"):
+            data[col] = _normalize_identity(data[col])
 
         return Workspace(**data)
 
@@ -1005,6 +1058,7 @@ if __name__ == "__main__":
         "normalized_key": "database_choice",
     })
     ws.add_verified_tradeoff({
+        "normalized_key": "orchestration_choice",
         "option_a": "Kubernetes",
         "option_b": "Nomad",
         "recommendation": "Use Kubernetes for better ecosystem",

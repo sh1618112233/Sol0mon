@@ -229,6 +229,26 @@ def _render_spec_sections(
         if _is_dispute_echo(w, dispute_text):
             continue
         winner_directives.append(f"- Use {w}.")
+    governance_decisions = src.get("governance_decisions", []) or []
+    for decision in governance_decisions:
+        text = (decision.get("decision") or "").strip()
+        if text:
+            winner_directives.append(f"- Governance-approved decision: {text}")
+    for decision in src.get("human_choices", []) or []:
+        text = (decision.get("decision") or "").strip()
+        if text:
+            winner_directives.append(f"- Explicit human choice: {text}")
+    for tradeoff in src.get("verified_tradeoffs", []) or []:
+        option_a = (tradeoff.get("option_a") or "").strip()
+        option_b = (tradeoff.get("option_b") or "").strip()
+        if option_a and option_b:
+            recommendation = (tradeoff.get("recommendation") or "").strip()
+            line = (f"- Governance-approved trade-off: preserve both {option_a} "
+                    f"and {option_b} as viable options; do not treat either as "
+                    "a verifier-verified fact")
+            if recommendation:
+                line += f"; recommendation is advisory: {recommendation}"
+            winner_directives.append(line + ".")
     if not winner_directives:
         # No verification_result / no extractable winners. The objective
         # remains a build directive: build the package described by the

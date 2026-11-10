@@ -71,15 +71,74 @@ def extract_answer_id(prompt: str) -> int | None:
 
 def _source_result_from_answer(answer: dict) -> dict:
     """Shape an answer row into the canonical build source_result."""
+    governance = answer.get("governance_result", {}) or {}
     return {
         "verified_decisions": answer.get("verified_decisions", []) or [],
-        "verified_tradeoffs": [],
-        "human_required": [],
+        "governance_decisions": answer.get("governance_decisions", governance.get("verified_decisions", [])) or [],
+        "human_choices": answer.get("human_decisions_resolved", []) or [],
+        "verified_tradeoffs": answer.get("verified_tradeoffs", governance.get("verified_tradeoffs", [])) or [],
+        "human_required": answer.get("human_required", governance.get("human_required", [])) or [],
+        "governance_result": governance,
         "verification_result": answer.get("verification_result", {}) or {},
         "conflict_severity": answer.get("conflict_severity", ""),
         "resolved_decisions": answer.get("resolved_decisions", []) or [],
         "synthesized_answer": answer.get("synthesized_answer", ""),
     }
+
+
+def _answer_eligibility_reason(answer: dict, *,
+                              allow_pending_human: bool = False) -> str | None:
+    """Fail closed when persisted verification cannot authorize a build."""
+    if str(answer.get("conflict_severity", "")).upper() == "FAILED_VERIFICATION":
+        return "source answer is marked FAILED_VERIFICATION"
+    verification = answer.get("verification_result")
+    if not isinstance(verification, dict):
+        return "source answer has missing or malformed verification data"
+    resolved = verification.get("resolved_claims")
+    unresolved = verification.get("unresolved_claims")
+    if not isinstance(resolved, list) or not isinstance(unresolved, list):
+        return "source answer has missing or malformed verification claim buckets"
+    if any(not isinstance(claim, dict) for claim in resolved + unresolved):
+        return "source answer contains malformed verification claims"
+    governed = verification.get("governance_result")
+    if not isinstance(governed, dict):
+        governed = {}
+    human_required = governed.get("human_required") or []
+    resolved_human_keys = {
+        str(item.get("normalized_key") or item.get("dispute_key") or "").strip()
+        for item in (answer.get("human_decisions_resolved") or [])
+        if isinstance(item, dict)
+    }
+    unresolved_human = [
+        item for item in human_required if isinstance(item, dict)
+        and str(item.get("normalized_key") or item.get("dispute_key") or "").strip()
+        not in resolved_human_keys
+    ]
+    if unresolved_human and not allow_pending_human:
+        return "source answer has unresolved human-required decisions"
+    permitted = {
+        str(item.get("normalized_key") or item.get("dispute_key") or "").strip()
+        for bucket, expected in (("verified_decisions", "VERIFIED_DECISION"),
+                                 ("verified_tradeoffs", "VERIFIED_TRADEOFF"))
+        for item in (governed.get(bucket) or [])
+        if isinstance(item, dict) and item.get("outcome_type") == expected
+    }
+    permitted.update(resolved_human_keys)
+    if allow_pending_human:
+        permitted.update(
+            str(item.get("normalized_key") or item.get("dispute_key") or "").strip()
+            for item in human_required if isinstance(item, dict)
+        )
+    unresolved_keys = {
+        str(item.get("normalized_key") or "").strip() for item in unresolved
+    }
+    unresolved_keys.discard("")
+    missing = unresolved_keys - permitted
+    if missing:
+        return "source answer has unresolved disputes without an eligible governance outcome: " + ", ".join(sorted(missing))
+    if any(not str(item.get("normalized_key") or "").strip() for item in resolved + unresolved):
+        return "source answer contains a verification claim without a stable identity"
+    return None
 
 
 def _is_full_build_decision(exec_dec: dict) -> bool:
@@ -299,6 +358,26 @@ def execute_build_spec(
             "workspace_id": workspace_id,
             "success": False,
         }
+
+    # Direct and resumed execution callers receive the same persisted-answer
+    # verification gate as normal resurrection. Prompt-originated workspaces
+    # without a source answer keep their existing path.
+    from build_workspace import _workspace_dir as _build_workspace_dir
+    _answer_path = _build_workspace_dir(workspace_id) / "answer.json"
+    if _answer_path.is_file():
+        try:
+            _stored_answer = json.loads(_answer_path.read_text(encoding="utf-8")) or {}
+        except (json.JSONDecodeError, OSError):
+            _stored_answer = {"answer_id": "malformed"}
+        if isinstance(_stored_answer, dict) and _stored_answer.get("answer_id") is not None:
+            _eligibility_reason = _answer_eligibility_reason(_stored_answer)
+            if _eligibility_reason:
+                return {
+                    "blocked": True,
+                    "blocked_reason": _eligibility_reason,
+                    "workspace_id": workspace_id,
+                    "success": False,
+                }
 
     # EXECUTION DECISION GATE — defense-in-depth. The authoritative gate is
     # in run_build_pipeline (before spec generation, since RESEARCH_ONLY
@@ -1052,6 +1131,19 @@ def run_build_pipeline(
                 "execution_blocked": True,
                 "blocked_reason": "source answer failed verification and is ineligible for implementation",
                 "error": "Build blocked: selected answer has FAILED_VERIFICATION status.",
+            }
+        eligibility_reason = _answer_eligibility_reason(
+            selected_answer, allow_pending_human=True,
+        )
+        if eligibility_reason:
+            return {
+                "classification": classification.to_dict(),
+                "workspace_id": None,
+                "answer_resurrected": True,
+                "status": "blocked",
+                "execution_blocked": True,
+                "blocked_reason": eligibility_reason,
+                "error": f"Build blocked: {eligibility_reason}.",
             }
         source_answer = selected_answer.get("synthesized_answer", "")
         user_intent_prompt = selected_answer.get("question") or None

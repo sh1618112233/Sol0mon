@@ -47,7 +47,9 @@ def _seed_answers(*rows):
             question=question, gpt_final="g", gemini_final="m",
             synthesized_answer=syn, consensus_score=score,
             conflict_severity="LOW", conflict_points=[],
-            validated_disputes=[], verification_result={},
+            validated_disputes=[], verification_result={
+                "resolved_claims": [], "unresolved_claims": [],
+            },
         )
         ids.append(i)
     return ids

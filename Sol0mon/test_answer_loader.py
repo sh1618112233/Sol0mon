@@ -52,7 +52,8 @@ def test_get_answer_by_id_shape() -> None:
         assert out is not None
         assert set(out.keys()) == {
             "answer_id", "question", "topic", "synthesized_answer",
-            "verification_result", "resolved_decisions", "verified_decisions",
+            "conflict_severity", "verification_result", "resolved_decisions",
+            "verified_decisions",
         }
         assert out["answer_id"] == ids[0]
         assert out["question"] == "Design Sol0mon architecture"

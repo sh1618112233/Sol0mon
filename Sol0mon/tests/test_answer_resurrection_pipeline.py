@@ -117,6 +117,41 @@ def test_resurrect_missing_answer_returns_error() -> None:
             os.unlink(db_path)
 
 
+def test_failed_verification_answer_is_blocked_before_workspace_creation() -> None:
+    db_path = _with_tmp_db()
+    tmp_ws = tempfile.mkdtemp()
+    bw.WORKSPACE_ROOT = Path(tmp_ws)
+    try:
+        answer_id = answer_memory.memory.save_debate(
+            question="Build a Sol0mon service", gpt_final="g", gemini_final="m",
+            synthesized_answer="unverified", consensus_score=20,
+            conflict_severity="FAILED_VERIFICATION", conflict_points=[],
+            validated_disputes=[], verification_result={},
+        )
+        result = bp.run_build_pipeline(f"Build answer {answer_id}")
+        assert result["status"] == "blocked"
+        assert "FAILED_VERIFICATION" in result["error"]
+        assert result["workspace_id"] is None
+        assert list(Path(tmp_ws).iterdir()) == []
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+def test_answer_loader_uses_canonical_key_and_ignores_keyless_claim() -> None:
+    from answer_loader import _to_verified_decisions
+
+    decisions = _to_verified_decisions({"resolved_claims": [
+        {"normalized_key": "database_choice", "dispute": "Database",
+         "verification": {"finding": "SQLite", "confidence": 90}},
+        {"dispute": "Unidentified claim",
+         "verification": {"finding": "Option A", "confidence": 90}},
+    ]})
+    assert len(decisions) == 1
+    assert decisions[0]["normalized_key"] == "database_choice"
+    assert "dispute_key" not in decisions[0]
+
+
 def test_full_pipeline_build_answer_id_to_build_spec() -> None:
     """Full path: 'Build answer <id>' -> classify -> resurrect -> build spec -> store."""
     db_path = _with_tmp_db()

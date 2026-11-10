@@ -66,6 +66,19 @@ def _safe_json_load(text: str | None, default: Any = None) -> Any:
         return default
 
 
+def _normalize_identity(records: list[dict]) -> list[dict]:
+    """Normalize legacy dispute_key records at the workspace boundary."""
+    normalized = []
+    for original in records or []:
+        if not isinstance(original, dict):
+            continue
+        item = dict(original)
+        if not item.get("normalized_key") and item.get("dispute_key"):
+            item["normalized_key"] = item["dispute_key"]
+        normalized.append(item)
+    return normalized
+
+
 # ---------------------------------------------------------------------------
 # Workspace status constants
 # ---------------------------------------------------------------------------
@@ -162,13 +175,13 @@ class Workspace:
         return cls(
             workspace_id=data.get("workspace_id", ""),
             original_prompt=data.get("original_prompt", ""),
-            verified_decisions=data.get("verified_decisions", []),
-            verified_tradeoffs=data.get("verified_tradeoffs", []),
-            human_required_items=data.get("human_required_items", []),
+            verified_decisions=_normalize_identity(data.get("verified_decisions", [])),
+            verified_tradeoffs=_normalize_identity(data.get("verified_tradeoffs", [])),
+            human_required_items=_normalize_identity(data.get("human_required_items", [])),
             architecture_constraints=data.get("architecture_constraints", []),
             consensus_history=data.get("consensus_history", []),
             active_disputes=data.get("active_disputes", []),
-            resolved_disputes=data.get("resolved_disputes", []),
+            resolved_disputes=_normalize_identity(data.get("resolved_disputes", [])),
             gpt_position=data.get("gpt_position", ""),
             gemini_position=data.get("gemini_position", ""),
             answer_history=data.get("answer_history", []),
@@ -217,11 +230,14 @@ class Workspace:
 
     def add_verified_decision(self, decision: dict) -> None:
         """Add a verified decision, deduplicating by normalized_key."""
-        nk = decision.get("normalized_key", "")
+        decision = dict(decision)
+        if not decision.get("normalized_key") and decision.get("dispute_key"):
+            decision["normalized_key"] = decision["dispute_key"]
+        nk = str(decision.get("normalized_key") or "").strip()
+        if not nk:
+            raise ValueError("verified decision requires a normalized_key")
         existing = {d.get("normalized_key") for d in self.verified_decisions}
         if nk and nk not in existing:
-            self.verified_decisions.append(decision)
-        elif not nk:
             self.verified_decisions.append(decision)
 
     def add_verified_tradeoff(self, tradeoff: dict) -> None:
@@ -252,7 +268,9 @@ class Workspace:
             return ""
         lines = ["<workspace_constraints>"]
         for d in self.verified_decisions[-10:]:  # Last 10 constraints
-            lines.append(f"  [{d.get('normalized_key', '')}]: {d.get('decision', '')}")
+            key = d.get("normalized_key") or d.get("dispute_key")
+            if key:
+                lines.append(f"  [{key}]: {d.get('decision', '')}")
         lines.append("</workspace_constraints>")
         lines.append("The above decisions are SETTLED from prior interactions. "
                       "Do not contradict them.")

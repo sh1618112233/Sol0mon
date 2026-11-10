@@ -49,13 +49,18 @@ def _to_verified_decisions(verification_result: dict) -> list[dict]:
         finding = str(v.get("finding", "") or "")
         if not finding:
             continue
+        normalized_key = str(claim.get("normalized_key") or "").strip()
+        if not normalized_key:
+            # A verified decision without an identity cannot be safely
+            # resurrected: empty keys make unrelated decisions collide.
+            continue
         try:
             confidence = int(v.get("confidence", 0))
         except (TypeError, ValueError):
             confidence = 0
         out.append({
             "outcome_type": "VERIFIED_DECISION",
-            "dispute_key": claim.get("normalized_key", ""),
+            "normalized_key": normalized_key,
             "dispute_text": claim.get("dispute", ""),
             "decision": finding,
             "option_a": None,
@@ -85,6 +90,7 @@ def _shape(debate: dict) -> dict:
         "question": debate["question"],
         "topic": identify_topic(debate["question"]),
         "synthesized_answer": debate["synthesized_answer"],
+        "conflict_severity": debate.get("conflict_severity", ""),
         "verification_result": debate.get("verification_result", {}),
         "resolved_decisions": debate.get("resolved_decisions", []),
         "verified_decisions": _to_verified_decisions(debate.get("verification_result", {})),

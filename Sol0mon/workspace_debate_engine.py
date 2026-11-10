@@ -177,9 +177,6 @@ class WorkspaceDebateEngine(DebateEngine):
         gemini.start()
 
         try:
-            # Step 1: Build context from prior workspace decisions
-            constraint_context = ws.get_constraint_context()
-
             # Pre-debate research (V1): plan + collect topic-keyed evidence
             # (reusing ws.research_evidence from prior runs), persist it, and
             # inject it into the follow-up so the debate is evidence-grounded.
@@ -198,6 +195,26 @@ class WorkspaceDebateEngine(DebateEngine):
             # Phase 8: persist impact audit trail to workspace metadata so
             # it survives resume/resurrection/chaining.
             ws.add_impact_audit(audit_entry(impact, follow_up))
+
+            # Remove affected decisions before constructing the first model
+            # prompt. They are being reconsidered and cannot be immutable
+            # constraints for that reconsideration.
+            affected_set = set(affected_keys)
+            reopened = []
+            if reopen_required and affected_set:
+                # Capture the original dispute payload before removing its
+                # settled representation from the active workspace state.
+                reopened = [self._reopen_from_workspace(key, ws, follow_up)
+                            for key in affected_keys]
+                ws.verified_decisions = [
+                    d for d in ws.verified_decisions
+                    if (d.get("normalized_key") or d.get("dispute_key")) not in affected_set
+                ]
+                ws.resolved_disputes = [
+                    d for d in ws.resolved_disputes
+                    if (d.get("normalized_key") or d.get("dispute_key")) not in affected_set
+                ]
+            constraint_context = ws.get_constraint_context()
 
             # Phase 9: reopen only the impacted HUMAN_REQUIRED dispute(s);
             # non-impacted pending human items stay untouched. The impact
@@ -230,24 +247,11 @@ class WorkspaceDebateEngine(DebateEngine):
             raw_disputes = conflict_result.get("disputed_claims", [])
 
             # Step 5: Reopen affected disputes only if follow-up triggers them
-            reopened = []
             if reopen_required and affected_keys:
                 print(f"[RESUME] Follow-up affects {len(affected_keys)} prior dispute(s): {affected_keys}")
-                for key in affected_keys:
-                    # Find the original dispute in resolved or active disputes
-                    reopened.append(self._reopen_from_workspace(key, ws, follow_up))
                 # Remove affected disputes from settled state so the
                 # re-debate replaces them; unaffected ones stay put and keep
                 # their research evidence (Phase 5 reuse).
-                affected_set = set(affected_keys)
-                ws.verified_decisions = [
-                    d for d in ws.verified_decisions
-                    if d.get("normalized_key") not in affected_set
-                ]
-                ws.resolved_disputes = [
-                    d for d in ws.resolved_disputes
-                    if d.get("normalized_key") not in affected_set
-                ]
 
             # Step 6: Build debate queue for new + reopened disputes
             all_new_disputes = raw_disputes + [r.dispute_text for r in reopened if r]

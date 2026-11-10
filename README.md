@@ -28,6 +28,22 @@ Optional: plan, build, test, and repair
 
 Instead of treating one model response as final, Sol0mon makes disagreements and decisions visible and saves workflow state so work can be resumed.
 
+## Platform versions
+
+This repository maintains two platform versions. They share Sol0mon's
+workflow and reliability behavior, but each has its own source tree,
+dependency manifest, configuration example, and tests. Use the version for
+your operating system; keep their virtual environments and runtime data
+separate.
+
+| Version | Directory | Intended environment | Dependencies and tests |
+| --- | --- | --- | --- |
+| Linux/server | `Sol0mon/` | Linux workstations and Linux servers | `Sol0mon/requirements.txt`; pytest from `Sol0mon/` |
+| Windows | `Sol0mon-Windows/` | Windows workstations and Windows hosts | `Sol0mon-Windows/requirements.txt`; pytest from `Sol0mon-Windows/` |
+
+See [the platform comparison](PLATFORM_COMPARISON.md) for shared reliability
+behavior and platform-specific differences.
+
 ## How it works
 
 1. You submit a question or project goal in the CLI.
@@ -77,7 +93,7 @@ flowchart TD
 
 ## Requirements
 
-- Python 3.12 (the version represented by the supplied environment; other versions have not been verified).
+- Python 3.12. CI is configured to test the Linux/server version on Ubuntu and the Windows version on Windows.
 - Chrome or Chromium for browser-based ChatGPT and Gemini sessions.
 - Accounts with access to the ChatGPT and Gemini websites.
 - A verification provider key in `.env`, or a local Ollama server.
@@ -85,32 +101,31 @@ flowchart TD
 
 ## Install
 
-The application and its requirements are in the canonical `Sol0mon/`
-directory. From the repository root, enter that directory before installing:
+Choose the directory for your platform and install only its requirements.
+
+### Linux/server
 
 ```bash
 cd Sol0mon
-```
-
-### Windows PowerShell
-
-```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
-```
-
-### Linux
-
-```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Add only the API key for the verification provider you plan to use. Never commit `.env`.
+### Windows PowerShell
+
+```powershell
+cd Sol0mon-Windows
+py -3.12 -m venv .venv
+\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+```
+
+Each directory provides its own `.env.example`. Add only keys for the
+verification providers you choose. GPT and Gemini debate uses authenticated
+browser sessions, not their APIs. Never commit `.env` or browser profiles.
 
 ### Start the browser
 
@@ -143,10 +158,16 @@ The CLI also provides `build` and `resume` commands; use `--help` to see their a
 
 ## Test
 
-Run the complete offline test suite (Python 3.12):
+Run each platform's offline suite from its own directory (Python 3.12):
 
 ```bash
+cd Sol0mon
 python -m pytest
+```
+
+```powershell
+cd Sol0mon-Windows
+python -m pytest -ra
 ```
 
 Live browser/provider checks are excluded by default. Run them only when you
@@ -156,12 +177,12 @@ have deliberately prepared authenticated sessions and external services:
 SOLOMON_RUN_LIVE_TESTS=1 python -m pytest -m live
 ```
 
-See [the operator guide](Sol0mon/docs/operator_guide.md) for persistence, recovery,
-human decisions, and deployment requirements.
+See [the Linux/server operator guide](Sol0mon/docs/operator_guide.md) for
+persistence, recovery, human decisions, and server deployment preparation.
 
 ## Project structure
 
-- Python modules at the `Sol0mon/` root: pipeline, debate, verification, providers, memory, and CLI.
+- Linux/server modules at `Sol0mon/`; Windows modules at `Sol0mon-Windows/`.
 - `coding_agents/`: coding-agent adapters.
 - `docs/`: architecture and engineering notes.
 - `tests/` and root-level test files: automated checks.

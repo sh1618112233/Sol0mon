@@ -125,3 +125,27 @@ been validated as an unattended service.
 The browser-provider workflow, hosted operation, and backup restoration have
 not been independently validated here. Offline tests do not establish live
 provider or deployment readiness.
+
+## AWS validation preparation (Linux/server version)
+
+This checklist is generic preparation for an operator-managed AWS instance;
+it contains no owner account, host, network, or deployment configuration.
+
+- [ ] Start from a clean Linux checkout and install Python 3.12.
+- [ ] Create a virtual environment and install `Sol0mon/requirements.txt`.
+- [ ] Copy `.env.example` to `.env`; configure only the chosen verifier and
+      confirm secrets are protected from source control and logs.
+- [ ] Configure durable `SOLOMON_DATA_DIR` and
+      `SOL0MON_BUILD_WORKSPACE_ROOT` paths, then verify startup logs show the
+      intended locations.
+- [ ] Install compatible Chromium/Chrome, create a dedicated profile, sign in
+      to the required websites, and confirm DevTools is loopback-only.
+- [ ] Run the offline test suite and CLI help before any live calls.
+- [ ] In a non-production workspace, validate a controlled debate, follow-up
+      correction, human resolution, implementation gate, build, restart, and
+      resume using the intended providers.
+- [ ] Back up SQLite consistently and workspace artifacts together; restore
+      into a separate path and verify `PRAGMA integrity_check` before use.
+
+AWS validation remains pending until these steps are performed on the
+operator's own instance. Windows deployment and testing remain separate.

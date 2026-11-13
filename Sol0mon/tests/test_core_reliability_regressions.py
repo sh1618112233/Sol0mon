@@ -52,5 +52,3 @@ def test_force_rearms_failed_stage_after_humans_are_resolved(tmp_path, monkeypat
     result = resume.resume_build(wid, force=True)
     assert result["reason"] == "staged_offline_no_execution"
     assert stage_status.read_stage_status(wid, "stage_1")["status"] == "PENDING"
-
-\n

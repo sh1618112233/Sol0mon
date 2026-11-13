@@ -9,6 +9,13 @@ from pathlib import Path
 
 if __name__ == "__main__":
     root = Path(__file__).resolve().parent.parent
-    raise SystemExit(subprocess.call(
-        [sys.executable, "-m", "pytest", "-ra"], cwd=root,
-    ))
+    app = Path(__file__).resolve().parent
+    legacy = sorted(str(path) for path in app.glob("test_*.py")
+                    if path.name != "test_suite.py")
+    result = subprocess.call(
+        [sys.executable, "-m", "pytest", "-ra", "Sol0mon/tests", *legacy],
+        cwd=root,
+    )
+    if result == 0:
+        result = subprocess.call([sys.executable, str(app / "test_suite.py")], cwd=app)
+    raise SystemExit(result)

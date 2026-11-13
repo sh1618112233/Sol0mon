@@ -511,11 +511,12 @@ def finalize_build(
         required = {
             "workspace.json": ws_dir / "workspace.json",
             "build_state.json": ws_dir / "build_state.json",
-            "answer.json": ws_dir / "answer.json",
             "decisions.json": ws_dir / "decisions.json",
             "implementation_plan.md": ws_dir / "implementation_plan.md",
             "manifest.json": ws_dir / "manifest.json",
         }
+        if parent_answer_id is not None:
+            required["answer.json"] = ws_dir / "answer.json"
         optional = {
             "execution_plan.json": ws_dir / "execution_plan.json",
             "synthesized_answer.md": ws_dir / "synthesized_answer.md",

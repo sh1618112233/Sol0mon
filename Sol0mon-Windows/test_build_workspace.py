@@ -33,7 +33,7 @@ def test_create_workspace() -> None:
         assert (ws_dir / "workspace.json").is_file()
         for name in ("synthesized_answer.md", "implementation_plan.md",
                     "human_decisions.json", "build_state.json",
-                    "answer.json", "decisions.json"):
+                    "decisions.json"):
             assert (ws_dir / name).is_file(), f"missing {name}"
 
         # Manifest matches the Build Foundation spec.

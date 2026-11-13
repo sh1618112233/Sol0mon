@@ -144,6 +144,8 @@ def test_select_answer_output_shape_includes_topic() -> None:
         assert set(out.keys()) == {
             "answer_id", "question", "topic", "synthesized_answer",
             "verification_result", "resolved_decisions", "verified_decisions",
+            "governance_result", "governance_decisions", "human_required",
+            "verified_tradeoffs", "conflict_severity",
         }
         assert out["topic"] == "sol0mon architecture"
     finally:
@@ -156,10 +158,15 @@ def test_does_not_touch_protected_logic() -> None:
         "debate_engine", "governance", "verification_engine",
         "consensus_engine", "chat_session", "gpt_worker", "gemini_worker",
     }
-    # select_answer imports answer_loader lazily; check the module's own imports
     import sys
-    mods = set(sys.modules.keys())
-    leaked = protected & mods - {"answer_memory"}  # answer_memory is allowed
+    before = set(sys.modules)
+    path = _with_tmp_db()
+    try:
+        ase.select_answer("answer 9999999")
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+    leaked = protected & (set(sys.modules) - before)
     assert not leaked, f"protected modules imported by selector path: {leaked}"
 
 

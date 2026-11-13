@@ -49,6 +49,7 @@ def _seed_answers(*rows):
             conflict_severity="LOW", conflict_points=[],
             validated_disputes=[], verification_result={
                 "resolved_claims": [], "unresolved_claims": [],
+                "verification_score": 100,
             },
         )
         ids.append(i)

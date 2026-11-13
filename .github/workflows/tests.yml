@@ -23,7 +23,7 @@ jobs:
       - name: Check Linux/server CLI startup
         run: python Sol0mon/sol0mon_cli.py --help
       - name: Run offline suite
-        run: python -m pytest -ra
+        run: python Sol0mon/run_all_tests.py
 
   windows:
     runs-on: windows-latest
@@ -44,5 +44,5 @@ jobs:
         run: python sol0mon_cli.py --help
         working-directory: Sol0mon-Windows
       - name: Run Windows offline suite
-        run: python -m pytest -ra
+        run: python run_all_tests.py
         working-directory: Sol0mon-Windows

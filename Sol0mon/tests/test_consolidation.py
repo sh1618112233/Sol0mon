@@ -555,9 +555,6 @@ def test_resume_corrupted_artifact_triggers_regeneration():
                   "verified_decisions": [], "resolved_decisions": []}
     (bw._workspace_dir(wid) / "decisions.json").write_text(
         json.dumps(decisions, indent=2), encoding="utf-8")
-    (bw._workspace_dir(wid) / "answer.json").write_text(
-        json.dumps({"synthesized_answer": "Use SQLite"}, indent=2),
-        encoding="utf-8")
     rep = resume.resume_build(wid)
     assert rep["resumed"] is True
     plan_path = bw._workspace_dir(wid) / "execution_plan.json"
@@ -616,9 +613,6 @@ def test_resume_partial_build_proceeds_when_manifest_present():
                   "resolved_decisions": []}
     (bw._workspace_dir(wid) / "decisions.json").write_text(
         json.dumps(decisions, indent=2), encoding="utf-8")
-    (bw._workspace_dir(wid) / "answer.json").write_text(
-        json.dumps({"synthesized_answer": "Use SQLite"}, indent=2),
-        encoding="utf-8")
     bse.store_implementation_spec(wid, _GOOD_SPEC_TEXT)
     EP.store_execution_plan(wid, EP.plan({"verification_result": VR_156,
                                           "verified_decisions": [],

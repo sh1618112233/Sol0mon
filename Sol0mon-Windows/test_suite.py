@@ -1145,30 +1145,48 @@ def test_workflow_classifier():
 
 
 def test_implementation_executor():
-    """Test implementation executor interfaces and test runner (no Claude Code)."""
-    from implementation_executor import (
-        execute_implementation, _run_tests, ImplementationResult,
+    """Test executor interfaces without starting pytest or calling a provider."""
+    import subprocess
+    import sys
+    from unittest.mock import patch
+
+    import implementation_executor
+    from implementation_executor import ImplementationResult
+
+    pytest_args = [sys.executable, "-m", "pytest", "--tb=short", "-x"]
+    completed = subprocess.CompletedProcess(
+        args=pytest_args,
+        returncode=1,
+        stdout="==================== 1 passed, 1 failed in 0.01s ====================\n",
+        stderr="",
+    )
+    with patch("implementation_executor.subprocess.run", return_value=completed) as run:
+        test_results = implementation_executor._run_tests()
+
+    assert test_results["runner"] == "pytest"
+    assert test_results["passed"] == 1
+    assert test_results["failed"] == 1
+    assert test_results["exit_code"] == 1
+    run.assert_called_once_with(
+        pytest_args, capture_output=True, text=True, timeout=120, cwd=None,
     )
 
-    # Test runner finds test_suite.py
-    test_results = _run_tests()
-    assert isinstance(test_results, dict)
-    assert "passed" in test_results
-    assert "failed" in test_results
-
-    # ImplementationResult dataclass
     result = ImplementationResult(success=True, output="test")
-    d = result.to_dict()
-    assert d["success"] == True
-    assert d["output"] == "test"
-    assert d["repair_attempts"] == 0
+    result_dict = result.to_dict()
+    assert result_dict["success"] is True
+    assert result_dict["output"] == "test"
+    assert result_dict["repair_attempts"] == 0
 
-    # execute_implementation without Claude Code falls back to provider
     plan = "Create a hello world function"
-    exec_result = execute_implementation(plan, use_claude_code=False)
-    assert isinstance(exec_result, dict)
-    assert "success" in exec_result
-    assert "output" in exec_result
+    with patch(
+        "implementation_executor._direct_implementation", return_value=result,
+    ) as direct_implementation:
+        exec_result = implementation_executor.execute_implementation(
+            plan, use_claude_code=False,
+        )
+
+    direct_implementation.assert_called_once_with(plan, None)
+    assert exec_result == result_dict
 
     return True
 

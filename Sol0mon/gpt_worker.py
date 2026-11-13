@@ -9,13 +9,13 @@ class GPTSession:
             url="https://chatgpt.com",
 
             input_selector=
-            "#prompt-textarea",
+            '[contenteditable="true"][role="textbox"][aria-label="Ask ChatGPT"]',
 
             stop_selector=
             '[data-testid="stop-button"]',
 
             response_selector=
-            '[data-message-author-role="assistant"]'
+            '[data-dil-response]'
         )
 
     def start(self):

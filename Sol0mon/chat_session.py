@@ -316,7 +316,7 @@ class ChatSession:
         if "gemini.google.com" in url:
             selector = "user-query"
         else:
-            selector = '[data-message-author-role="user"]'
+            selector = '[data-user-message-bubble="true"]'
         try:
             return self.page.locator(selector).count()
         except Exception:
@@ -334,12 +334,13 @@ class ChatSession:
         successful click as a successful submission (root cause of the false
         submits). Logs [SUBMIT CHECK] and [SEND BUTTON HTML] diagnostics.
         """
+        is_gemini = "gemini.google.com" in (self.page.url or "")
         user_message_count_after = user_message_count_before
         composer_cleared = False
         stop_appeared = False
         deadline = time.time() + timeout
         while time.time() < deadline:
-            # Condition A: a new user message node appeared in the conversation
+            # A new user message is the authoritative acceptance signal.
             try:
                 user_message_count_after = self._user_message_count()
                 if user_message_count_after > user_message_count_before:
@@ -347,41 +348,38 @@ class ChatSession:
             except Exception:
                 pass
 
-            # Condition B: composer cleared (Gemini empties the box on accept)
-            try:
-                composer_text = self.page.locator(
-                    self.input_selector
-                ).first.evaluate(
-                    "el => (el.innerText || el.value || '').trim()"
-                )
-                if composer_text == "":
-                    composer_cleared = True
-                    break
-            except Exception:
-                pass
+            # These weaker fallback signals are retained for Gemini only.
+            if is_gemini:
+                try:
+                    composer_text = self.page.locator(
+                        self.input_selector
+                    ).first.evaluate(
+                        "el => (el.innerText || el.value || '').trim()"
+                    )
+                    if composer_text == "":
+                        composer_cleared = True
+                        break
+                except Exception:
+                    pass
 
-            # Condition C: stop button appeared (generation started)
-            try:
-                stop = self.page.locator(self.stop_selector).first
-                if stop.count() > 0 and stop.is_visible():
-                    stop_appeared = True
-                    break
-            except Exception:
-                pass
+                try:
+                    stop = self.page.locator(self.stop_selector).first
+                    if stop.count() > 0 and stop.is_visible():
+                        stop_appeared = True
+                        break
+                except Exception:
+                    pass
 
             self.page.wait_for_timeout(500)
 
-        # Re-read final counts for the diagnostic
         try:
             user_message_count_after = self._user_message_count()
         except Exception:
             pass
 
-        accepted = (
-            user_message_count_after > user_message_count_before
-            or composer_cleared
-            or stop_appeared
-        )
+        accepted = user_message_count_after > user_message_count_before
+        if is_gemini:
+            accepted = accepted or composer_cleared or stop_appeared
 
         # ponytail: stop / composer-cleared alone are weaker than the
         # user-count bump; if they fire without a count increase, the click
@@ -426,7 +424,10 @@ class ChatSession:
         tag = "RECOVERY" if recovery else "SUBMIT"
         user_message_count_before = self._user_message_count()
 
-        for method in range(1, 5):
+        is_chatgpt = "chatgpt.com" in (self.page.url or "")
+        methods = (3, 4) if is_chatgpt else range(1, 5)
+
+        for method in methods:
             print(f"[{tag}]")
             print(f"Submit attempt {method}" if recovery else f"Attempt={method}")
             try:
@@ -505,29 +506,31 @@ class ChatSession:
             except Exception:
                 tb_en = False
 
-            if "gemini.google.com" in self.page.url:
+            is_gemini = "gemini.google.com" in (self.page.url or "")
+            if is_gemini:
                 send_vis = self._gemini_send_visible()
                 send_en = send_vis
-            else:
-                try:
-                    sb_sel = 'button[data-testid="send-button"]'
-                    sb = self.page.locator(sb_sel).first
-                    send_vis = sb.count() > 0 and sb.is_visible()
-                    send_en = (not sb.evaluate("btn => btn.disabled")
-                               if send_vis else False)
-                except Exception:
-                    send_en = False
 
-            if tb_vis and tb_en and send_vis and send_en:
+            ready = tb_vis and tb_en and (
+                send_vis and send_en if is_gemini else True
+            )
+            if ready:
                 break
             self.page.wait_for_timeout(500)
 
         print("[SUBMIT DIAGNOSTIC]")
         print(f"TextareaVisible={tb_vis}")
         print(f"TextareaEnabled={tb_en}")
-        print(f"SendVisible={send_vis}")
-        print(f"SendEnabled={send_en}")
-        return tb_vis and tb_en and send_vis and send_en
+        if "gemini.google.com" in (self.page.url or ""):
+            print(f"SendVisible={send_vis}")
+            print(f"SendEnabled={send_en}")
+        else:
+            print("SendButtonCheck=NotRequired (ChatGPT Enter submission)")
+        return tb_vis and tb_en and (
+            send_vis and send_en
+            if "gemini.google.com" in (self.page.url or "")
+            else True
+        )
 
     # ------------------------------------------------------------------
     # Fix 11: Safety / error detection
@@ -1254,7 +1257,9 @@ class ChatSession:
             self.page.wait_for_timeout(2000)
             editor_length = self.page.evaluate("""
             () => {
-                const editor = document.querySelector('#prompt-textarea');
+                const editor = document.querySelector(
+                    '[contenteditable="true"][role="textbox"][aria-label="Ask ChatGPT"]'
+                );
                 return editor ? editor.innerText.length : -1;
             }
             """)

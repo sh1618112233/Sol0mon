@@ -326,7 +326,6 @@ specified in `architecture_hardening.md`; **§orch** in
 | `workspace_knowledge.py` | 259 | Per-stage knowledge persistence under `<workspace>/{research,verified,architecture,implementation}/<package_id>.{md|json}`. `load_stage_input`. | §7.6 |
 | `job_store.py` | ~150 | SQLite `jobs` table for the legacy `orchestrator.submit_job` API. | §7.7 |
 | `orchestrator.py` | ~120 | Legacy `submit_job` / `get_result` / `get_status` job API. | §6.28 |
-| `sol0mon_graph.py` | ~250 | LangGraph workflow + `MemorySaver` checkpointer. (Optional.) | §6.29 |
 
 ### 3.5 Layer 5 — Phase 4 (one module, fifteen components)
 
@@ -3226,7 +3225,7 @@ Decommissioned/trap models (do NOT use):
 `openrouter_client`, `ollama_client` have their own `generate` with key
 rotation; the router calls them in order.
 
-End of Batch 9. Next batch: §6.27–6.29 Workspace orchestrator + legacy orchestrator + LangGraph, then move to §8 state machines.
+End of Batch 9. Next batch: §6.27–6.28 Workspace orchestrator + legacy orchestrator, then move to §8 state machines.
 
 ---
 
@@ -3265,16 +3264,6 @@ def get_result(job_id: str) -> dict    # the result, including synthesized_answe
 Wraps the legacy `job_store`. The workspace-based API (§6.27) is the
 recommended path; `orchestrator` is preserved for back-compat with the
 README's first example.
-
-### 6.29 `sol0mon_graph.py` — LangGraph workflow orchestration
-
-Optional. LangGraph-based orchestration with a `MemorySaver` checkpointer;
-requires `pip install langgraph`. The Phase 4 `WorkflowOrchestrator`
-(§`workflow_orchestration.md`) does NOT require LangGraph; it is
-pure-stdlib. This module is for callers that want graph-native
-checkpointing / replay via LangGraph's primitives.
-
----
 
 ## 8. Cross-layer state machine definitions
 

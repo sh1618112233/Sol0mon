@@ -17,7 +17,7 @@ All 6 execution paths assessed. Gaps connected with minimal code during Phase 3.
 ### Pre-audit gap
 - `workspace_orchestrator.submit_workspace()` did not call `workflow_classifier.classify()`.
 - `pipeline_runner.execute()` did not call any classifier — prompts went straight to debate.
-- Only `sol0mon_graph.run_workflow()` connected them, but it required LangGraph + live browsers.
+- The custom `build_pipeline.run_build_pipeline()` path connects classification to the debate pipeline without a separate workflow framework.
 - "Build Project Sol0mon MVP" produced 0 keyword matches (needed LLM call for classification).
 
 ### Fix applied
@@ -25,7 +25,7 @@ All 6 execution paths assessed. Gaps connected with minimal code during Phase 3.
 2. `build_pipeline.classify_prompt()` wraps `classify()` as a thin entry point.
 
 ### Remaining gap
-- `workspace_orchestrator.submit_workspace()` and `pipeline_runner.execute()` still do not call `classify()` directly. This is by design: they are the raw debate entry points. `build_pipeline.run_build_pipeline()` is the route that classifies first. The `sol0mon_graph` path also classifies. No fix needed.
+- `workspace_orchestrator.submit_workspace()` and `pipeline_runner.execute()` still do not call `classify()` directly. This is by design: they are the raw debate entry points. `build_pipeline.run_build_pipeline()` is the route that classifies first. No fix needed.
 
 ---
 

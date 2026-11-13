@@ -32,11 +32,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import uuid as _uuid
 from datetime import datetime, timezone
+from storage_paths import workspace_database_path
 
-DB_FILE = os.environ.get("HUMAN_DECISION_DB", "database/workspaces.db")
+DB_FILE = workspace_database_path()
 
 
 def _get_connection() -> sqlite3.Connection:
@@ -128,6 +130,13 @@ class HumanDecisionStore:
         d = dict(decision) if isinstance(decision, dict) else {}
         d.setdefault("workspace_id", workspace_id)
         d.setdefault("resolved", False)
+        if not d.get("options"):
+            explicit_pair = re.search(r"\b([^:—–\n]+?)\s+vs\.?\s+([^—–\n]+?)(?:\s+[—–-]\s+|[?.!]|$)",
+                                      str(d.get("dispute_text") or d.get("question") or ""),
+                                      flags=re.IGNORECASE)
+            if explicit_pair:
+                d["options"] = [explicit_pair.group(1).strip(),
+                                 explicit_pair.group(2).strip()]
 
         did = decision_id or d.get("decision_id") or ""
         key = _semantic_key(d)
@@ -244,10 +253,17 @@ class HumanDecisionStore:
         If workspace_id is given, scopes the lookup to that workspace (needed
         when decision IDs are reused across workspaces, e.g. build-phase 'd1')."""
         self._ensure_initialized()
+        chosen_option = str(chosen_option or "").strip()
+        if not chosen_option:
+            return False
         row = self._load_row(decision_id, workspace_id)
         if row is None or row["resolved"]:
             return False
         data = json.loads(row["data"]) if row["data"] else {}
+        options = data.get("options") or [data.get("option_a"), data.get("option_b")]
+        options = [str(option).strip() for option in options if option is not None and str(option).strip()]
+        if chosen_option not in options:
+            return False
         data["resolved"] = True
         data["chosen_option"] = chosen_option
         data["resolved_at"] = _now()
@@ -287,7 +303,7 @@ class HumanDecisionStore:
             d = json.loads(data_str) if data_str else {}
             if _semantic_key(d) == key or _decision_key(d) == key:
                 conn.close()
-                return self.resolve(did, chosen_option)
+                return self.resolve(did, chosen_option, workspace_id=workspace_id)
         conn.close()
         return False
 

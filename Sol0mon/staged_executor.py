@@ -471,6 +471,26 @@ def execute_stages(
     continues from the next pending stage via stage_status.next_pending_stage
     (deps-aware). DONE stages are NOT re-executed (the executor's contract).
     """
+    try:
+        from human_decision_manager import load_pending
+        pending_decisions = load_pending(workspace_id) or []
+    except Exception as exc:
+        return {
+            "workspace_id": workspace_id, "stages_total": 0,
+            "stages_done": 0, "stages_failed": 0, "stage_results": [],
+            "integration": None, "success": False, "blocked": True,
+            "blocked_reason": "human_decision_store_unavailable",
+            "error": str(exc),
+        }
+    if pending_decisions:
+        return {
+            "workspace_id": workspace_id, "stages_total": 0,
+            "stages_done": 0, "stages_failed": 0, "stage_results": [],
+            "integration": None, "success": False, "blocked": True,
+            "blocked_reason": "pending_human_decisions",
+            "pending_count": len(pending_decisions),
+            "pending_decisions": pending_decisions,
+        }
     if working_dir is None:
         working_dir = str(_workspace_dir(workspace_id))
     if not stage_status.has_staged_layout(workspace_id):

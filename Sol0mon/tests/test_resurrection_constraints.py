@@ -146,9 +146,8 @@ def test_workspace_contains_answer_and_decisions_json() -> None:
 
         # Audit fix #4: implementation_plan.md content check (not just is_file).
         # At resurrection time the spec has NOT been generated, so the file
-        # carries its empty placeholder. The check now pins the truthful
-        # post-resurrection content: an empty string, exactly the placeholder
-        # laid down by build_workspace.DEFAULT_FILES.
+        # carries its empty placeholder. The check pins the truthful
+        # post-resurrection content.
         assert (wsdir / "implementation_plan.md").read_text() == ""
 
         # Audit fix #3 + #4: build_state.json content check (not just is_file).

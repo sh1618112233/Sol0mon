@@ -1185,6 +1185,10 @@ class DebateEngine:
         exec_decision = self._attach_execution_decision(
             question, governance_context, verification_result, final,
         )
+        # Preserve adjudication provenance in the persisted verifier envelope
+        # without rewriting the verifier's resolved/unresolved findings.
+        verification_result = dict(verification_result or {})
+        verification_result["governance_result"] = governance_context
 
         # Human-Readable Synthesis V3 — a SECOND synthesis layer that renders
         # a human-facing answer from the verified decision model. Deterministic,

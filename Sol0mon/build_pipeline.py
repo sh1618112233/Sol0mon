@@ -71,20 +71,88 @@ def extract_answer_id(prompt: str) -> int | None:
 
 def _source_result_from_answer(answer: dict) -> dict:
     """Shape an answer row into the canonical build source_result."""
+    governance = answer.get("governance_result", {}) or {}
     return {
         "verified_decisions": answer.get("verified_decisions", []) or [],
-        "verified_tradeoffs": [],
-        "human_required": [],
+        "governance_decisions": answer.get("governance_decisions", governance.get("verified_decisions", [])) or [],
+        "human_choices": answer.get("human_decisions_resolved", []) or [],
+        "verified_tradeoffs": answer.get("verified_tradeoffs", governance.get("verified_tradeoffs", [])) or [],
+        "human_required": answer.get("human_required", governance.get("human_required", [])) or [],
+        "governance_result": governance,
         "verification_result": answer.get("verification_result", {}) or {},
+        "conflict_severity": answer.get("conflict_severity", ""),
         "resolved_decisions": answer.get("resolved_decisions", []) or [],
         "synthesized_answer": answer.get("synthesized_answer", ""),
     }
 
 
+def _answer_eligibility_reason(answer: dict, *,
+                              allow_pending_human: bool = False) -> str | None:
+    """Fail closed when persisted verification cannot authorize a build."""
+    if not isinstance(answer, dict):
+        return "source answer is not a JSON object"
+    if answer.get("answer_id") in (None, ""):
+        return "source answer is missing answer_id"
+    if str(answer.get("conflict_severity", "")).upper() == "FAILED_VERIFICATION":
+        return "source answer is marked FAILED_VERIFICATION"
+    verification = answer.get("verification_result")
+    if not isinstance(verification, dict):
+        return "source answer has missing or malformed verification data"
+    resolved = verification.get("resolved_claims")
+    unresolved = verification.get("unresolved_claims")
+    if not isinstance(resolved, list) or not isinstance(unresolved, list):
+        return "source answer has missing or malformed verification claim buckets"
+    score = verification.get("verification_score")
+    if score is not None and (not isinstance(score, (int, float)) or not 0 <= score <= 100):
+        return "source answer has malformed verification score"
+    if score is None and not resolved and not unresolved:
+        return "source answer has no verification evidence"
+    if any(not isinstance(claim, dict) for claim in resolved + unresolved):
+        return "source answer contains malformed verification claims"
+    governed = verification.get("governance_result")
+    if not isinstance(governed, dict):
+        governed = {}
+    human_required = governed.get("human_required") or []
+    resolved_human_keys = {
+        str(item.get("normalized_key") or item.get("dispute_key") or "").strip()
+        for item in (answer.get("human_decisions_resolved") or [])
+        if isinstance(item, dict)
+    }
+    unresolved_human = [
+        item for item in human_required if isinstance(item, dict)
+        and str(item.get("normalized_key") or item.get("dispute_key") or "").strip()
+        not in resolved_human_keys
+    ]
+    if unresolved_human and not allow_pending_human:
+        return "source answer has unresolved human-required decisions"
+    permitted = {
+        str(item.get("normalized_key") or item.get("dispute_key") or "").strip()
+        for bucket, expected in (("verified_decisions", "VERIFIED_DECISION"),
+                                 ("verified_tradeoffs", "VERIFIED_TRADEOFF"))
+        for item in (governed.get(bucket) or [])
+        if isinstance(item, dict) and item.get("outcome_type") == expected
+    }
+    permitted.update(resolved_human_keys)
+    if allow_pending_human:
+        permitted.update(
+            str(item.get("normalized_key") or item.get("dispute_key") or "").strip()
+            for item in human_required if isinstance(item, dict)
+        )
+    unresolved_keys = {
+        str(item.get("normalized_key") or "").strip() for item in unresolved
+    }
+    unresolved_keys.discard("")
+    missing = unresolved_keys - permitted
+    if missing:
+        return "source answer has unresolved disputes without an eligible governance outcome: " + ", ".join(sorted(missing))
+    if any(not str(item.get("normalized_key") or "").strip() for item in resolved + unresolved):
+        return "source answer contains a verification claim without a stable identity"
+    return None
+
+
 def _is_full_build_decision(exec_dec: dict) -> bool:
     return (exec_dec or {}).get("execution_decision") in (
         "IMPLEMENTATION_REQUIRED", "BUILD_AND_VALIDATE", "BUILD_ONLY", "FULL_BUILD",
-        "STOP_HUMAN_REQUIRED",
     )
 
 
@@ -288,7 +356,16 @@ def execute_build_spec(
 
     # HUMAN ESCALATION GATE — block autonomous implementation while any
     # human-required decision remains unresolved. (Task 2)
-    pending = load_pending(workspace_id)
+    try:
+        pending = load_pending(workspace_id)
+    except Exception as exc:
+        return {
+            "blocked": True,
+            "blocked_reason": "human_decision_store_unavailable",
+            "error": str(exc),
+            "workspace_id": workspace_id,
+            "success": False,
+        }
     if pending:
         return {
             "blocked": True,
@@ -299,6 +376,27 @@ def execute_build_spec(
             "success": False,
         }
 
+    # Direct and resumed execution callers receive the same persisted-answer
+    # verification gate as normal resurrection. Prompt-originated workspaces
+    # without a source answer keep their existing path.
+    from build_workspace import _workspace_dir as _build_workspace_dir
+    _answer_path = _build_workspace_dir(workspace_id) / "answer.json"
+    if _answer_path.is_file():
+        try:
+            _stored_answer = json.loads(_answer_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeError) as exc:
+            _stored_answer = None
+            _eligibility_reason = f"source answer could not be read or parsed: {exc}"
+        else:
+            _eligibility_reason = _answer_eligibility_reason(_stored_answer)
+        if _eligibility_reason:
+            return {
+                "blocked": True,
+                "blocked_reason": _eligibility_reason,
+                "workspace_id": workspace_id,
+                "success": False,
+            }
+
     # EXECUTION DECISION GATE — defense-in-depth. The authoritative gate is
     # in run_build_pipeline (before spec generation, since RESEARCH_ONLY
     # answers must not even run the spec debate). This catches direct
@@ -307,6 +405,15 @@ def execute_build_spec(
     # or, failing that, out of answer.json. If the decision is not
     # IMPLEMENTATION_REQUIRED, execution is BLOCKED. (Phase 4)
     exec_block = _load_execution_decision_block(workspace_id)
+    if exec_block and exec_block.get("execution_decision") == "STOP_HUMAN_REQUIRED":
+        return {
+            "blocked": True,
+            "blocked_reason": "execution_decision",
+            "execution_decision": "STOP_HUMAN_REQUIRED",
+            "execution_reason": exec_block.get("execution_reason", ""),
+            "workspace_id": workspace_id,
+            "success": False,
+        }
     if exec_block is not None and exec_block.get("blocked"):
         return {
             "blocked": True,
@@ -1042,6 +1149,29 @@ def run_build_pipeline(
                 "workspace_id": None,
             }
         answer_resurrected = True
+        if str(selected_answer.get("conflict_severity", "")).upper() == "FAILED_VERIFICATION":
+            return {
+                "classification": classification.to_dict(),
+                "workspace_id": None,
+                "answer_resurrected": True,
+                "status": "blocked",
+                "execution_blocked": True,
+                "blocked_reason": "source answer failed verification and is ineligible for implementation",
+                "error": "Build blocked: selected answer has FAILED_VERIFICATION status.",
+            }
+        eligibility_reason = _answer_eligibility_reason(
+            selected_answer, allow_pending_human=True,
+        )
+        if eligibility_reason:
+            return {
+                "classification": classification.to_dict(),
+                "workspace_id": None,
+                "answer_resurrected": True,
+                "status": "blocked",
+                "execution_blocked": True,
+                "blocked_reason": eligibility_reason,
+                "error": f"Build blocked: {eligibility_reason}.",
+            }
         source_answer = selected_answer.get("synthesized_answer", "")
         user_intent_prompt = selected_answer.get("question") or None
         try:
@@ -1082,7 +1212,11 @@ def run_build_pipeline(
         }
         _telemetry.observe(execution_mode=selected_mode or recommended_mode)
 
-    if exec_dec.get("blocked") or not _is_full_build_decision(exec_dec):
+    human_resolution_only = (
+        exec_dec.get("execution_decision") == "STOP_HUMAN_REQUIRED"
+    )
+    if exec_dec.get("blocked") or (
+            not _is_full_build_decision(exec_dec) and not human_resolution_only):
         block_status = exec_dec.get("block_status") or "blocked"
         _telemetry.observe(stage="blocked",
                            execution_mode=selected_mode or recommended_mode)
@@ -1314,8 +1448,11 @@ def run_build_pipeline(
                 exec_result = {
                     "success": False,
                     "blocked": True,
-                    "blocked_reason": "pending_human_decisions",
-                    "pending_count": 1,  # the staged executor emitted at least one
+                    "blocked_reason": staged_execution_result.get(
+                        "blocked_reason", "pending_human_decisions"),
+                    "pending_count": staged_execution_result.get("pending_count", 0),
+                    "pending_decisions": staged_execution_result.get(
+                        "pending_decisions", []),
                     "output": "staged execution blocked (HUMAN_REQUIRED)",
                     "test_results": {},
                     "repair_attempts": (staged_execution_result

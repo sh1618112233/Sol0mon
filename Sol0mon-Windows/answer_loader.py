@@ -49,13 +49,18 @@ def _to_verified_decisions(verification_result: dict) -> list[dict]:
         finding = str(v.get("finding", "") or "")
         if not finding:
             continue
+        normalized_key = str(claim.get("normalized_key") or "").strip()
+        if not normalized_key:
+            # A verified decision without an identity cannot be safely
+            # resurrected: empty keys make unrelated decisions collide.
+            continue
         try:
             confidence = int(v.get("confidence", 0))
         except (TypeError, ValueError):
             confidence = 0
         out.append({
             "outcome_type": "VERIFIED_DECISION",
-            "dispute_key": claim.get("normalized_key", ""),
+            "normalized_key": normalized_key,
             "dispute_text": claim.get("dispute", ""),
             "decision": finding,
             "option_a": None,
@@ -80,14 +85,22 @@ def _shape(debate: dict) -> dict:
     is the enriched per-dispute record; `verified_decisions` is the Schema-A
     bucket the build extractor consumes as immutable constraints.
     """
+    verification_result = debate.get("verification_result", {})
+    governance = (verification_result.get("governance_result", {})
+                 if isinstance(verification_result, dict) else {})
     return {
         "answer_id": debate["id"],
         "question": debate["question"],
         "topic": identify_topic(debate["question"]),
         "synthesized_answer": debate["synthesized_answer"],
-        "verification_result": debate.get("verification_result", {}),
+        "conflict_severity": debate.get("conflict_severity", ""),
+        "verification_result": verification_result,
         "resolved_decisions": debate.get("resolved_decisions", []),
-        "verified_decisions": _to_verified_decisions(debate.get("verification_result", {})),
+        "verified_decisions": _to_verified_decisions(verification_result),
+        "governance_result": governance,
+        "governance_decisions": governance.get("verified_decisions", []),
+        "verified_tradeoffs": governance.get("verified_tradeoffs", []),
+        "human_required": governance.get("human_required", []),
     }
 
 
@@ -137,6 +150,8 @@ if __name__ == "__main__":
             assert set(latest.keys()) == {
                 "answer_id", "question", "topic", "synthesized_answer",
                 "verification_result", "resolved_decisions", "verified_decisions",
+                "governance_result", "governance_decisions", "verified_tradeoffs",
+                "human_required",
             }
             assert get_answer_by_id(999999) is None
             assert get_latest_answer() is not None

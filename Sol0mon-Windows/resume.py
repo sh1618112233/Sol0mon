@@ -109,12 +109,12 @@ def _shape_source_result(decisions: dict, answer_text: str) -> dict:
     }
 
 
-def _pending_human_count(workspace_id: str) -> int:
+def _pending_human_count(workspace_id: str) -> int | None:
     try:
         from human_decision_manager import load_pending
         return len(load_pending(workspace_id) or [])
     except Exception:
-        return 0
+        return None
 
 
 def _block_status_of(state: dict) -> str:
@@ -158,6 +158,14 @@ def resume_build(
     table."""
     if not workspace_id:
         return {"error": "no workspace_id", "resumed": False}
+
+    pending_count = _pending_human_count(workspace_id)
+    if pending_count is None:
+        return {"resumed": False, "reason": "human_decision_store_unavailable",
+                "workspace_id": workspace_id}
+    if pending_count:
+        return {"resumed": False, "reason": "blocked_pending_humans",
+                "pending_count": pending_count, "workspace_id": workspace_id}
 
     # Staged dispatch: a workspace with a staged build plan gets a
     # stage-aware resume (continue from the next pending stage). This runs
@@ -216,6 +224,9 @@ def resume_build(
 
     if stage is BuildLifecycle.BLOCKED:
         pending_n = _pending_human_count(workspace_id)
+        if pending_n is None:
+            return {"resumed": False, "reason": "human_decision_store_unavailable",
+                    "lifecycle_stage": stage.value, "workspace_id": workspace_id}
         if pending_n > 0:
             return {"resumed": False, "reason": "blocked_pending_humans",
                     "lifecycle_stage": stage.value,
@@ -474,7 +485,15 @@ def _resume_staged_build(
     # A previously FAILED stage with a HUMAN_REQUIRED pending blocks unless
     # ``force=True``. Otherwise the operator's resolution is what unblocks it.
     human_pending = _pending_human_count(workspace_id)
-    if stages_failed > 0 or human_pending > 0:
+    if human_pending is None:
+        return {"resumed": False, "reason": "human_decision_store_unavailable",
+                "workspace_id": workspace_id}
+    if human_pending > 0:
+        return {"resumed": False, "reason": "blocked_pending_humans",
+                "lifecycle_stage": current_lifecycle(workspace_id).value,
+                "stages_done": stages_done, "stages_failed": stages_failed,
+                "pending_count": human_pending, "workspace_id": workspace_id}
+    if stages_failed > 0:
         if not force:
             return {"resumed": False, "reason": "staged_build_failed_no_force",
                     "lifecycle_stage": current_lifecycle(workspace_id).value,
@@ -555,7 +574,10 @@ def _resume_staged_build(
     elif staged_result.get("blocked"):
         exec_result = {
             "success": False, "blocked": True,
-            "blocked_reason": "pending_human_decisions",
+            "blocked_reason": staged_result.get(
+                "blocked_reason", "pending_human_decisions"),
+            "pending_count": staged_result.get("pending_count", 0),
+            "pending_decisions": staged_result.get("pending_decisions", []),
             "test_results": {}, "error": "staged execution blocked",
             "executed_at": datetime.now(timezone.utc).isoformat(),
             "staged": True,
@@ -581,6 +603,9 @@ def _resume_from_execution_allowed(workspace_id: str, use_claude_code: bool,
     import build_pipeline as bp
 
     pending = _pending_human_count(workspace_id)
+    if pending is None:
+        return {"resumed": False, "reason": "human_decision_store_unavailable",
+                "workspace_id": workspace_id}
     if pending > 0:
         return {"resumed": False, "reason": "blocked_pending_humans",
                 "lifecycle_stage": BuildLifecycle.BLOCKED.value,

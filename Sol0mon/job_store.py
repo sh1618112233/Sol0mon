@@ -2,8 +2,10 @@ import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from storage_paths import database_path
 
-DB_FILE = "database/jobs.db"
+DB_FILE = database_path("jobs.db", override=os.environ.get("JOB_DB"),
+                        legacy_names=("database/jobs.db",))
 
 
 def get_connection():

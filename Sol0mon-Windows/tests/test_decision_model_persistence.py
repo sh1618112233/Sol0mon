@@ -180,7 +180,7 @@ def test_shape_exposes_decision_model() -> None:
         assert len(vdec) == 7
         for d in vdec:
             assert d["outcome_type"] == "VERIFIED_DECISION"
-            assert d.get("dispute_key")
+            assert d.get("normalized_key")
             assert d.get("decision")
             assert d.get("reasoning")
             assert d["decision"] == d["reasoning"]  # finding doubled as both

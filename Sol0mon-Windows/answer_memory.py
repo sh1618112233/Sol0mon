@@ -1,8 +1,10 @@
+import os
 import sqlite3
 import json
 from datetime import datetime, timezone
+from storage_paths import database_path
 
-DB_FILE = "answer_memory.db"
+DB_FILE = database_path("answer_memory.db", override=os.environ.get("ANSWER_MEMORY_DB"))
 
 
 class AnswerMemory:
@@ -425,9 +427,10 @@ class AnswerMemory:
             FROM debates
             WHERE
                 question LIKE ?
-                OR decision_summary LIKE ?
-                OR conflict_points LIKE ?
-                OR resolved_decisions LIKE ?
+                    ESCAPE '\\'
+                OR decision_summary LIKE ? ESCAPE '\\'
+                OR conflict_points LIKE ? ESCAPE '\\'
+                OR resolved_decisions LIKE ? ESCAPE '\\'
             ORDER BY id DESC
             LIMIT ?
             """,

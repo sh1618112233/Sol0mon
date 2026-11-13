@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import sys
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -105,6 +106,17 @@ def test_contradiction_postgresql_critical() -> None:
     # dependency: storage_strategy depends on database_choice (references
     # "database"); provider_routing/deployment_model do not.
     assert "storage_strategy" in impact["affected_disputes"], impact
+
+
+def test_tradeoff_identity_is_required_and_scoped_by_dispute():
+    ws = _critical_workspace()
+    with pytest.raises(ValueError, match="normalized_key"):
+        ws.add_verified_tradeoff({"option_a": "SQLite", "option_b": "PostgreSQL"})
+    ws.add_verified_tradeoff({"normalized_key": "storage_a",
+                              "option_a": "SQLite", "option_b": "PostgreSQL"})
+    ws.add_verified_tradeoff({"normalized_key": "storage_b",
+                              "option_a": "SQLite", "option_b": "PostgreSQL"})
+    assert len(ws.verified_tradeoffs) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +260,8 @@ def test_audit_entry_shape() -> None:
 # ---------------------------------------------------------------------------
 
 class _FakeSession:
+    captured_prompts = []
+
     def __init__(self, label="X"):
         self.label = label
 
@@ -256,6 +270,7 @@ class _FakeSession:
     def close(self): pass
 
     def ask(self, prompt, dispute_key=None):
+        self.captured_prompts.append(prompt)
         return f"{self.label}:response"
 
 
@@ -333,6 +348,7 @@ def _install_integration_patches(debated: list):
 
 
 def test_resume_workspace_only_affected_redebated() -> None:
+    _FakeSession.captured_prompts.clear()
     ws = _critical_workspace()
     ws.resolved_disputes = [
         {"normalized_key": "database_choice", "dispute": "Use PostgreSQL",
@@ -381,6 +397,10 @@ def test_resume_workspace_only_affected_redebated() -> None:
         "sources") == ["s3"]
     assert "database_choice" not in rd_keys
     assert "storage_strategy" not in rd_keys
+    first_prompt = _FakeSession.captured_prompts[0]
+    assert "database_choice" not in first_prompt
+    assert "storage_strategy" not in first_prompt
+    assert "provider_routing" in first_prompt
 
     # --- Phase 8 audit trail persisted on the workspace ---
     assert ws.impact_audit_trail, "audit trail not persisted"

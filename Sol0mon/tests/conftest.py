@@ -34,8 +34,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 
+def pytest_collection_modifyitems(config, items):
+    live_opt_in = os.environ.get("SOLOMON_RUN_LIVE_TESTS") == "1"
+    for item in items:
+        if "live" in item.path.name.lower() or "opencode_live" in item.path.name.lower():
+            item.add_marker(pytest.mark.live)
+            if not live_opt_in:
+                item.add_marker(pytest.mark.skip(
+                    reason="live test requires SOLOMON_RUN_LIVE_TESTS=1"))
+
+
 @pytest.fixture(autouse=True)
-def _isolate_sol0mon_module_globals():
+def _isolate_sol0mon_module_globals(request, tmp_path, monkeypatch):
     """Snapshot + restore the module globals tests swap in place.
 
     ponytail: heals the shared-state leak at the root (one fixture) rather
@@ -50,6 +60,37 @@ def _isolate_sol0mon_module_globals():
         "ws_root": _bw.WORKSPACE_ROOT,
     }
     try:
+        if request.node.path.name == "test_telemetry.py":
+            monkeypatch.chdir(tmp_path)
+        # The historical answer-55 end-to-end tests use a known fixture, not
+        # a developer's local database. Seed an isolated test DB only for
+        # those tests so a clean checkout has the same deterministic input.
+        name = request.node.name
+        if "answer55" in name or "build_answer_55" in str(request.node.path):
+            import sqlite3
+            import answer_memory as _am
+            from test_deterministic_decisions import (
+                debate55_verification_result, debate55_governance_context,
+            )
+            fixture_db = tmp_path / "answer_memory.db"
+            _am.DB_FILE = str(fixture_db)
+            _am.memory._initialize_database()
+            with sqlite3.connect(fixture_db) as conn:
+                conn.executemany(
+                    "INSERT INTO debates (id, created_at, question, gpt_final, "
+                    "gemini_final, synthesized_answer, consensus_score, "
+                    "conflict_severity, conflict_points) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    [(i, "2026-01-01T00:00:00+00:00", "fixture placeholder", "", "", "", 0, "LOW", "[]")
+                     for i in range(1, 55)],
+                )
+            _am.memory.save_debate(
+                question="Design Sol0mon architecture",
+                gpt_final="fixture GPT position", gemini_final="fixture Gemini position",
+                synthesized_answer="Deterministic test answer", consensus_score=98,
+                conflict_severity="LOW", conflict_points=[],
+                validated_disputes=[],
+                verification_result=debate55_verification_result(),
+            )
         yield
     finally:
         try:

@@ -68,7 +68,8 @@ def _setup_workspace(decisions=None, answer_text="Use SQLite"):
     if answer_text is not None:
         (bw._workspace_dir(wid) / "answer.json").write_text(
             json.dumps({"synthesized_answer": answer_text,
-                        "answer_id": 1, "question": "q"}, indent=2),
+                        "answer_id": 1, "question": "q",
+                        "verification_result": VR_156}, indent=2),
             encoding="utf-8")
     return wid
 
@@ -240,9 +241,7 @@ def test_legacy_only_workspace_resumes_via_status_mapper():
     wid = bw.create_workspace(source_question="Build Sol0mon MVP")
     (bw._workspace_dir(wid) / "decisions.json").write_text(
         json.dumps(_decisions_156(), indent=2), encoding="utf-8")
-    (bw._workspace_dir(wid) / "answer.json").write_text(
-        json.dumps({"synthesized_answer": "Use SQLite"}, indent=2),
-        encoding="utf-8")
+    # This legacy prompt-originated workspace has no source answer file.
     # A realistic legacy workspace has the spec on disk (the pipeline wrote
     # it). After the artefact-selection fix the spec on disk MUST carry the
     # executable-spec sections (the defence-in-depth gate enforces them on

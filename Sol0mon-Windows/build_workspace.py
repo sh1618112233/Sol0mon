@@ -62,10 +62,14 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from storage_paths import persistent_dir
 
 # Root for all build workspaces. Configurable via env so tests can
 # point it at a tmp dir without touching real data.
-WORKSPACE_ROOT = Path(os.environ.get("SOL0MON_BUILD_WORKSPACE_ROOT", "workspaces"))
+WORKSPACE_ROOT = persistent_dir(
+    "workspaces", override=os.environ.get("SOL0MON_BUILD_WORKSPACE_ROOT"),
+    legacy_names=("workspaces",),
+)
 
 BUILD_SPEC_VERSION = 1
 
@@ -78,12 +82,10 @@ _WORKSPACE_INDEX = "_index.json"
 # Files laid down at creation time -> default contents.
 # human_decisions.json mirrors the Phase 2 human_decision_manager format:
 #   {"pending": [], "resolved": []}
-# answer.json / decisions.json are the authoritative build inputs (Fix: the
-# decision model must persist in every workspace). Populated by
-# build_pipeline.resurrect_answer; defaulted empty here so they always exist.
+# decisions.json is the authoritative build input. answer.json is written only
+# when a workspace is resurrected from a persisted source answer.
 DEFAULT_FILES: dict[str, str] = {
     "synthesized_answer.md": "",
-    "answer.json": "{}",
     "decisions.json": '{"verification_result": {}, "resolved_decisions": [], "verified_decisions": []}',
     "implementation_plan.md": "",
     "human_decisions.json": '{"pending": [], "resolved": []}',

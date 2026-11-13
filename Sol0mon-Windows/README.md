@@ -1,5 +1,9 @@
 # Sol0mon for Windows
 
+This is the Windows version of Sol0mon. The separate `Sol0mon/` directory
+contains the Linux/server version. Keep dependencies, environment files,
+databases, and workspaces for the two versions separate.
+
 Sol0mon is a Python application for coordinating research, multi-model debate, verification, synthesis, and optional implementation work. It stores answers and workflow state in local workspaces.
 
 ## How It Works
@@ -66,9 +70,13 @@ Debates may call external providers or browser sessions. Build and resume comman
 
 ## Testing
 
-    .\.venv\Scripts\python.exe run_all_tests.py
+From this directory, run the offline Windows suite:
 
-Some tests need external tools or a running Chrome session. Report skips and failures as such.
+    .\.venv\Scripts\python.exe -m pytest -ra
+
+Live browser/provider checks are excluded by default. They require an
+authenticated browser session and explicit opt-in with
+`SOLOMON_RUN_LIVE_TESTS=1`. CI runs this version on Windows with Python 3.12.
 
 ## Contributing
 

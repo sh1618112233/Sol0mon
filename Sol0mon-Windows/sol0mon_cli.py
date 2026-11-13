@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 
@@ -259,6 +260,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         STAGE_PIPELINE, STAGE_DEBATE, STAGE_VERIFICATION,
     )
 
+
     status_path = args.status_path or os.path.join(os.getcwd(),
                                                     "workspace_status.json")
     report_path = args.report_path or os.path.join(os.getcwd(),
@@ -341,6 +343,117 @@ def _cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_human(args: argparse.Namespace) -> int:
+    from human_decision_store import store
+    from workspace_manager import workspace_mgr, WorkspaceStatus
+    from build_workspace import _workspace_dir, write_build_state
+    build_dir = _workspace_dir(args.workspace_id)
+    is_build_workspace = (build_dir / "workspace.json").is_file()
+    if args.human_action == "list":
+        for item in store.all_for_workspace(args.workspace_id):
+            print(json.dumps(item, ensure_ascii=False, default=str))
+        return 0
+    item = store.get(args.decision_id, workspace_id=args.workspace_id)
+    if item is None:
+        print("Decision not found in the specified workspace.")
+        return 1
+    build_answer = None
+    if is_build_workspace:
+        try:
+            build_answer = json.loads((build_dir / "answer.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            print("Build workspace has no readable source answer; choice was not applied.")
+            return 1
+    ws = None if is_build_workspace else workspace_mgr.load_workspace(args.workspace_id)
+    if ws is None and not is_build_workspace:
+        print("Workspace not found.")
+        return 1
+    if not store.resolve(args.decision_id, args.option,
+                         workspace_id=args.workspace_id):
+        print("Choice must exactly match one of the recorded options; decision may already be resolved.")
+        return 1
+    choice = {
+        "decision": f"Human decision: {item.get('question', '')} — {args.option}",
+        "normalized_key": (item.get("normalized_key") or item.get("dispute_key")
+                           or next(iter(item.get("affected_disputes") or []), None)
+                           or args.decision_id),
+        "status": "human_choice",
+        "provenance": "human",
+        "decision_id": args.decision_id,
+        "chosen_option": args.option,
+        "options": item.get("options", []),
+        "reasoning": item.get("reasoning", ""),
+    }
+    if is_build_workspace:
+        answer = build_answer
+        answer_path = build_dir / "answer.json"
+        choices = answer.setdefault("human_decisions_resolved", [])
+        choices = [d for d in choices if d.get("decision_id") != args.decision_id]
+        choices.append(choice)
+        answer["human_decisions_resolved"] = choices
+        answer_path.write_text(json.dumps(answer, indent=2), encoding="utf-8")
+        decisions_path = build_dir / "decisions.json"
+        try:
+            decisions = json.loads(decisions_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            decisions = {}
+        decisions["human_decisions_resolved"] = choices
+        decisions_path.write_text(json.dumps(decisions, indent=2), encoding="utf-8")
+        from build_pipeline import _source_result_from_answer, generate_build_spec
+        source_result = _source_result_from_answer(answer)
+        resolved_keys = {d.get("normalized_key") for d in choices}
+        source_result["human_required"] = [
+            d for d in source_result.get("human_required", [])
+            if (d.get("normalized_key") or d.get("dispute_key")) not in resolved_keys
+        ]
+        verification_for_execution = dict(source_result.get("verification_result") or {})
+        verification_for_execution["unresolved_claims"] = [
+            d for d in verification_for_execution.get("unresolved_claims", [])
+            if (d.get("normalized_key") or "") not in resolved_keys
+        ]
+        from execution_decision import classify_execution_decision
+        execution_decision = classify_execution_decision(
+            question=f"Build answer {answer.get('answer_id', '')}",
+            verified_decisions=(source_result.get("verified_decisions", [])
+                                 + source_result.get("governance_decisions", [])
+                                 + source_result.get("human_choices", [])),
+            verified_tradeoffs=source_result.get("verified_tradeoffs", []),
+            human_required=source_result["human_required"],
+            synthesized_answer=answer.get("synthesized_answer", ""),
+            verification_result=verification_for_execution,
+        )
+        spec_result = generate_build_spec(
+            args.workspace_id, answer.get("synthesized_answer", ""),
+            source_result=source_result,
+        )
+        if not spec_result.get("spec_text"):
+            print("Human choice was recorded, but the implementation spec could not be regenerated.")
+            return 1
+        write_build_state(args.workspace_id, "spec_generated",
+                          spec_status=spec_result.get("status"),
+                          human_decision_resolved=args.decision_id,
+                          execution_decision=execution_decision.get("execution_decision"),
+                          execution_reason="Reclassified after workspace-scoped human decision resolution.",
+                          execution_confidence=execution_decision.get("execution_confidence", 0),
+                          execution_decision_source="human_resolution")
+        if args.execute:
+            from resume import resume_build
+            result = resume_build(args.workspace_id, use_claude_code=True)
+            print(json.dumps(result, indent=2, default=str))
+            return 0 if result.get("resumed") else 1
+        print("Human choice recorded and the build specification regenerated. "
+              f"Continue with: python sol0mon_cli.py resume {args.workspace_id} --use-claude-code")
+        return 0
+
+    ws.verified_decisions = [d for d in ws.verified_decisions
+                             if d.get("normalized_key") != choice["normalized_key"]]
+    ws.verified_decisions.append(choice)
+    ws.status = WorkspaceStatus.COMPLETED
+    workspace_mgr.save_workspace(ws)
+    print("Human choice recorded in workspace constraints. Resume the workspace to continue.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="sol0mon",
@@ -391,6 +504,19 @@ def build_parser() -> argparse.ArgumentParser:
                                "(Implementation stage). Default offline-safe.")
     p_resume.set_defaults(func=_cmd_resume)
 
+    p_human = sub.add_parser("human", help="Inspect and resolve workspace human decisions.")
+    sub_human = p_human.add_subparsers(dest="human_action", required=True)
+    p_human_list = sub_human.add_parser("list", help="List decisions for a workspace.")
+    p_human_list.add_argument("workspace_id")
+    p_human_list.set_defaults(func=_cmd_human)
+    p_human_resolve = sub_human.add_parser("resolve", help="Resolve with an exact recorded option.")
+    p_human_resolve.add_argument("workspace_id")
+    p_human_resolve.add_argument("decision_id")
+    p_human_resolve.add_argument("option")
+    p_human_resolve.add_argument("--execute", action="store_true",
+                                 help="Resume and execute the build immediately after regenerating its specification.")
+    p_human_resolve.set_defaults(func=_cmd_human)
+
     # Telemetry & Runtime Observability V1 — read-only runtime status.
     p_status = sub.add_parser("status",
                               help="Show the live runtime status "
@@ -416,6 +542,15 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    from answer_memory import DB_FILE as answer_db
+    from workspace_manager import DB_FILE as workspace_db
+    from build_workspace import WORKSPACE_ROOT
+    logging.getLogger("sol0mon").info(
+        "Persistent paths: answer_db=%s workspace_db=%s build_workspaces=%s",
+        answer_db, workspace_db, WORKSPACE_ROOT,
+    )
     return args.func(args)
 
 

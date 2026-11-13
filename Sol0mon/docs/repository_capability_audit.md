@@ -2,7 +2,7 @@
 
 ## PHASE 1 — Capability Audit
 
-All 9 major components assessed. Status as of 2026-07-11.
+All 8 major components assessed. Status as of 2026-07-11.
 
 ---
 
@@ -15,7 +15,7 @@ All 9 major components assessed. Status as of 2026-07-11.
 | **Entrypoint** | `classify(prompt) -> WorkflowClassification` |
 | **Public Functions** | `classify()`, `is_implementation()`, `can_execute_code()` |
 | **Dependencies** | `cerebras_client.generate` (LLM fallback), `debate_engine._extract_json` |
-| **Callers** | `sol0mon_graph.node_classify_workflow`, `build_pipeline.classify_prompt` |
+| **Callers** | `build_pipeline.classify_prompt` |
 | **Notes** | Rule-based pre-filter + LLM fallback. 4 workflow types: DISCUSSION, RESEARCH, ARCHITECTURE, IMPLEMENTATION. Only IMPLEMENTATION allows code execution. Modified in this pass: added "build" keyword for offline classification of build prompts. |
 
 ---
@@ -29,7 +29,7 @@ All 9 major components assessed. Status as of 2026-07-11.
 | **Entrypoint** | `workspace_orchestrator.submit_workspace(prompt)` |
 | **Public Functions** | `submit_workspace()`, `follow_up_workspace()`, `reopen_workspace_dispute()`, `resolve_human_requirement()`, `get_workspace_status()`, `list_workspaces()` |
 | **Dependencies** | `job_store`, `workspace_manager`, `workspace_debate_engine`, `human_decision_queue`, `answer_memory.memory` |
-| **Callers** | `test_workspace_flow.py`, `sol0mon_graph.node_create_workspace` |
+| **Callers** | `test_workspace_flow.py` |
 | **Notes** | SQLite-backed workspace persistence with WAL mode. Manages verified decisions, tradeoffs, human-required items, answer chain. Threaded job execution. Fully functional. |
 
 #### Build Workspace (Phase 1 addition)
@@ -111,7 +111,7 @@ All 9 major components assessed. Status as of 2026-07-11.
 | **Entrypoint** | `execute_implementation(plan, workspace_id, use_claude_code) -> dict` |
 | **Public Functions** | `execute_implementation()` |
 | **Dependencies** | `cerebras_client.generate` (direct implementation fallback), `subprocess` (Claude Code CLI) |
-| **Callers** | `sol0mon_graph.node_execute_implementation`, `build_pipeline.execute_build_spec` |
+| **Callers** | `build_pipeline.execute_build_spec` |
 | **Notes** | Repair loop (3 retries) with Claude Code CLI or cerebras_client fallback. Runs pytest after generation. NOT connected to coding_agent_router (uses cerebras_client or claude CLI directly). Connected via `build_pipeline.execute_build_spec` which routes to coding_agent_router for agent selection. |
 
 ---
@@ -129,18 +129,6 @@ All 9 major components assessed. Status as of 2026-07-11.
 | **Notes** | Phase 1 stub. Registers opencode agent only. `run()` returns `AgentResult(success=False, error="not implemented")`. No Claude Code, Codex, or Gemini CLI integration. Connected to the pipeline via `build_pipeline.execute_build_spec` which calls `get_agent("opencode", workspace_id)` after execution. |
 
 ---
-
-### 9. Graph Runtime
-
-| Field | Value |
-|-------|-------|
-| **Status** | PARTIALLY_IMPLEMENTED |
-| **File** | `sol0mon_graph.py` |
-| **Entrypoint** | `run_workflow(prompt, workspace_id, thread_id, approved) -> dict` |
-| **Public Functions** | `run_workflow()`, `resume_workflow()`, `build_sol0mon_graph()`, `get_compiled_graph()` |
-| **Dependencies** | `langgraph` (optional, degrades gracefully), `workflow_classifier`, `workspace_manager`, `workspace_debate_engine`, `synthesis_engine`, `implementation_executor`, `cerebras_client` |
-| **Callers** | None in production (smoke test only in `__main__`) |
-| **Notes** | LangGraph workflow: classify -> create_workspace -> debate -> [synthesize|generate_plan -> user_approval -> execute]. Connects workflow_classifier to debate pipeline (Path A). However, uses `workspace_manager.create_workspace` (SQLite) not `build_workspace.create_workspace` (file-based). Not connected to build_prompt_generator or build_spec_engine. The file-based `build_pipeline.py` is the non-LangGraph alternative. |
 
 ---
 

@@ -1144,51 +1144,6 @@ def test_workflow_classifier():
     return True
 
 
-def test_sol0mon_graph():
-    """Test LangGraph graph construction (no live execution)."""
-    from sol0mon_graph import (
-        build_sol0mon_graph, default_state, LANGGRAPH_AVAILABLE,
-    )
-
-    # Graph builds even without langgraph installed (stub)
-    graph = build_sol0mon_graph()
-    assert graph is not None
-
-    # Default state has required keys
-    state = default_state(prompt="Test prompt")
-    assert state["prompt"] == "Test prompt"
-    assert state["workspace_id"] == ""
-    assert state["workflow_type"] == "DISCUSSION"
-    assert state["status"] == "created"
-    assert "thread_id" in state
-
-    # Node functions exist
-    from sol0mon_graph import (
-        node_classify_workflow,
-        node_create_workspace,
-        node_debate,
-        node_synthesize,
-        node_generate_implementation_plan,
-        node_user_approval,
-        node_execute_implementation,
-        route_after_debate,
-        route_after_approval,
-    )
-
-    # Test routing logic
-    assert route_after_debate({"workflow_type": "DISCUSSION", "status": "consensus"}) == "synthesize"
-    assert route_after_debate({"workflow_type": "RESEARCH", "status": "consensus"}) == "synthesize"
-    assert route_after_debate({"workflow_type": "ARCHITECTURE", "status": "consensus"}) == "synthesize"
-    assert route_after_debate({"workflow_type": "IMPLEMENTATION", "status": "consensus"}) == "generate_implementation_plan"
-    assert route_after_debate({"workflow_type": "DISCUSSION", "status": "failed"}) == "end"
-
-    # Approval routing
-    assert route_after_approval({"user_approved": True}) == "execute_implementation"
-    assert route_after_approval({"user_approved": False}) == "end"
-
-    return True
-
-
 def test_implementation_executor():
     """Test implementation executor interfaces and test runner (no Claude Code)."""
     from implementation_executor import (
@@ -1247,7 +1202,6 @@ def run_all_tests():
         ("provider_router_logic", test_provider_router_logic, True),
         ("groq_openrouter_clients", test_groq_openrouter_clients, True),
         ("workflow_classifier", test_workflow_classifier, True),
-        ("sol0mon_graph", test_sol0mon_graph, True),
         ("implementation_executor", test_implementation_executor, True),
     ]
 
